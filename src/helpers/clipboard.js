@@ -267,12 +267,13 @@ class ClipboardManager {
   }
 
   // 使用 niri IPC 切换焦点来重置键盘状态（解决 niri + wtype 焦点 bug）
+  // 通过在浮动窗口（录音指示器）和平铺窗口之间切换焦点来实现，视觉干扰更小
   async resetKeyboardWithNiri() {
     return new Promise((resolve) => {
-      this.safeLog("🔄 使用 niri IPC 重置键盘焦点");
+      this.safeLog("🔄 使用 niri IPC 重置键盘焦点（浮动/平铺切换）");
 
-      // 切换到上一个窗口
-      const niri1 = spawn("niri", ["msg", "action", "focus-window-previous"]);
+      // 切换到浮动窗口（录音指示器）
+      const niri1 = spawn("niri", ["msg", "action", "switch-focus-between-floating-and-tiling"]);
 
       niri1.on("close", (code1) => {
         if (code1 !== 0) {
@@ -281,9 +282,9 @@ class ClipboardManager {
           return;
         }
 
-        // 短暂延迟后切换回来
+        // 短暂延迟后切换回平铺窗口
         setTimeout(() => {
-          const niri2 = spawn("niri", ["msg", "action", "focus-window-previous"]);
+          const niri2 = spawn("niri", ["msg", "action", "switch-focus-between-floating-and-tiling"]);
 
           niri2.on("close", (code2) => {
             if (code2 === 0) {
