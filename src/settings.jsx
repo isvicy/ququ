@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
 import { toast, Toaster } from "sonner";
-import { Settings, Save, Eye, EyeOff, X, Loader2, TestTube, CheckCircle, XCircle, Mic, Shield } from "lucide-react";
+import { Settings, Save, Eye, EyeOff, X, Loader2, TestTube, CheckCircle, XCircle, Mic, Shield, Monitor } from "lucide-react";
 import { usePermissions } from "./hooks/usePermissions";
 import PermissionCard from "./components/ui/permission-card";
 
@@ -11,11 +11,13 @@ const SettingsPage = () => {
     ai_api_key: "",
     ai_base_url: "https://api.openai.com/v1",
     ai_model: "gpt-3.5-turbo",
-    enable_ai_optimization: true
+    enable_ai_optimization: true,
+    start_minimized: false
   });
-  
+
   const [customModel, setCustomModel] = useState(false);
-  
+  const [platform, setPlatform] = useState('');
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
@@ -51,13 +53,18 @@ const SettingsPage = () => {
           ai_api_key: allSettings.ai_api_key || "",
           ai_base_url: allSettings.ai_base_url || "https://api.openai.com/v1",
           ai_model: allSettings.ai_model || "gpt-3.5-turbo",
-          enable_ai_optimization: allSettings.enable_ai_optimization !== false // 默认为true
+          enable_ai_optimization: allSettings.enable_ai_optimization !== false, // 默认为true
+          start_minimized: allSettings.start_minimized || false
         };
         setSettings(prev => ({ ...prev, ...loadedSettings }));
-        
+
         // 检查是否使用自定义模型
         const predefinedModels = ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo", "gpt-4o", "gpt-4o-mini", "qwen3-30b-a3b-instruct-2507"];
         setCustomModel(!predefinedModels.includes(loadedSettings.ai_model));
+
+        // 获取平台信息
+        const systemInfo = await window.electronAPI.getSystemInfo();
+        setPlatform(systemInfo.platform);
       }
     } catch (error) {
       console.error("加载设置失败:", error);
@@ -77,7 +84,8 @@ const SettingsPage = () => {
         await window.electronAPI.setSetting('ai_base_url', settings.ai_base_url);
         await window.electronAPI.setSetting('ai_model', settings.ai_model);
         await window.electronAPI.setSetting('enable_ai_optimization', settings.enable_ai_optimization);
-        
+        await window.electronAPI.setSetting('start_minimized', settings.start_minimized);
+
         toast.success("设置保存成功");
       }
     } catch (error) {
@@ -241,6 +249,65 @@ const SettingsPage = () => {
                   onRequest={testAccessibilityPermission}
                   buttonText="测试权限"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* 启动设置部分 */}
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 mb-6">
+            <div className="p-6">
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 chinese-title">
+                  启动设置
+                </h2>
+                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                  配置应用的启动行为。
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                {/* 启动时最小化到托盘 */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <Monitor className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                    <div>
+                      <label htmlFor="start-minimized-toggle" className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                        启动时最小化到托盘
+                      </label>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        应用启动后隐藏主窗口，仅显示托盘图标
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={settings.start_minimized}
+                    onClick={() => handleInputChange('start_minimized', !settings.start_minimized)}
+                    className={`${
+                      settings.start_minimized ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
+                    } relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`${
+                        settings.start_minimized ? 'translate-x-4' : 'translate-x-0'
+                      } inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+                    />
+                  </button>
+                </div>
+
+                {/* 提示信息 */}
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg">
+                  <p className="text-xs text-blue-700 dark:text-blue-300">
+                    💡 <strong>提示：</strong>如需开机自动启动，请在窗口管理器配置中添加启动项。
+                    {platform === 'linux' && (
+                      <span className="block mt-1 text-blue-600 dark:text-blue-400">
+                        niri 用户可在配置文件中添加：<code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">spawn-at-startup "ququ"</code>
+                      </span>
+                    )}
+                  </p>
+                </div>
               </div>
             </div>
           </div>

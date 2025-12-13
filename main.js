@@ -177,11 +177,15 @@ async function startApp() {
     logger.warn("FunASR在启动时不可用，这不是关键问题", err);
   });
 
+  // 读取启动设置
+  const startMinimized = databaseManager.getSetting('start_minimized', false);
+  logger.info('启动设置', { startMinimized });
+
   // 创建主窗口
   try {
     logger.info('创建主窗口...');
-    await windowManager.createMainWindow();
-    logger.info('主窗口创建成功');
+    await windowManager.createMainWindow({ startHidden: startMinimized });
+    logger.info('主窗口创建成功', { startMinimized });
   } catch (error) {
     logger.error("创建主窗口时出错:", error);
   }

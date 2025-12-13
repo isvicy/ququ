@@ -9,11 +9,13 @@ class WindowManager {
     this.settingsWindow = null;
   }
 
-  async createMainWindow() {
+  async createMainWindow(options = {}) {
     if (this.mainWindow) {
       this.mainWindow.focus();
       return this.mainWindow;
     }
+
+    const startHidden = options.startHidden || false;
 
     this.mainWindow = new BrowserWindow({
       width: 400,
@@ -24,6 +26,7 @@ class WindowManager {
       resizable: false,
       skipTaskbar: true,
       movable: true,
+      show: !startHidden, // 如果启动时隐藏，则不显示窗口
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
