@@ -1,4 +1,4 @@
-const { Tray, Menu, nativeImage } = require("electron");
+const { Tray, Menu, nativeImage, app } = require("electron");
 const path = require("path");
 
 class TrayManager {
@@ -66,13 +66,14 @@ class TrayManager {
   }
 
   getTrayIconPath() {
-    const isDev = process.env.NODE_ENV === "development";
-    
-    if (isDev) {
-      return path.join(__dirname, "..", "..", "assets", "icon.png");
-    } else {
-      // 生产环境路径
+    // 使用 app.isPackaged 判断是否为打包后的应用
+    // 这样无论是 pnpm start 还是 pnpm run dev 都能正确找到图标
+    if (app.isPackaged) {
+      // 打包后的生产环境路径
       return path.join(process.resourcesPath, "assets", "icon.png");
+    } else {
+      // 开发环境或未打包时使用源码目录
+      return path.join(__dirname, "..", "..", "assets", "icon.png");
     }
   }
 
