@@ -107,7 +107,6 @@ class GLMASRServer:
 
         try:
             import torch
-            import torchaudio
             from transformers import (
                 AutoConfig,
                 AutoModelForCausalLM,
@@ -133,7 +132,7 @@ class GLMASRServer:
             logger.info("加载模型配置...")
             self.config = AutoConfig.from_pretrained(
                 self.model_path,
-                trust_remote_code=True
+                trust_remote_code=True,
             )
 
             # 加载模型
@@ -176,17 +175,22 @@ class GLMASRServer:
     def _build_prompt(self, audio_path, chunk_seconds=30):
         """构建模型输入"""
         import torch
-        import torchaudio
+        import librosa
+        import numpy as np
 
         audio_path = Path(audio_path)
-        wav, sr = torchaudio.load(str(audio_path))
-        wav = wav[:1, :]  # 转为单声道
+
+        # 使用 librosa 加载音频（更可靠，不依赖 torchcodec）
+        wav_np, sr = librosa.load(str(audio_path), sr=None, mono=True)
 
         # 重采样到 16kHz
         if sr != self.feature_extractor.sampling_rate:
-            wav = torchaudio.transforms.Resample(
-                sr, self.feature_extractor.sampling_rate
-            )(wav)
+            wav_np = librosa.resample(
+                wav_np, orig_sr=sr, target_sr=self.feature_extractor.sampling_rate
+            )
+
+        # 转换为 torch tensor，shape: [1, samples]
+        wav = torch.from_numpy(wav_np).unsqueeze(0).float()
 
         tokens = []
         tokens += self.tokenizer.encode("<|user|>")
@@ -225,7 +229,6 @@ class GLMASRServer:
         tokens += self.tokenizer.encode("<|assistant|>")
         tokens += self.tokenizer.encode("\n")
 
-        import torch
         batch = {
             "input_ids": torch.tensor([tokens], dtype=torch.long),
             "audios": torch.cat(audios, dim=0),

@@ -24,6 +24,11 @@ class GLMASRManager {
     this.device = null; // 自动检测
   }
 
+  // 兼容 FunASRManager 的 modelsInitialized 属性
+  get modelsInitialized() {
+    return this.serverReady;
+  }
+
   getGLMASRServerPath() {
     if (process.env.NODE_ENV === "development") {
       return path.join(__dirname, "..", "..", "glm_asr_server.py");
@@ -37,13 +42,13 @@ class GLMASRManager {
   }
 
   getSystemPythonPath() {
-    // GLM-ASR 需要较新的 torch，使用系统 Python 或独立虚拟环境
+    // GLM-ASR 需要较新的 torch，优先使用 uv 创建的虚拟环境
     const projectRoot = path.join(__dirname, "..", "..");
 
     const possiblePaths = [
-      // 优先使用项目的 GLM-ASR 虚拟环境
-      path.join(projectRoot, ".venv-glm", "bin", "python"),
-      path.join(projectRoot, ".venv-glm", "bin", "python3"),
+      // 优先使用 uv 创建的虚拟环境
+      path.join(projectRoot, ".venv", "bin", "python"),
+      path.join(projectRoot, ".venv", "bin", "python3"),
       // 回退到系统 Python
       "python3",
       "python",
@@ -52,7 +57,7 @@ class GLMASRManager {
     ];
 
     for (const pythonPath of possiblePaths) {
-      if (pythonPath.startsWith("/") || pythonPath.startsWith(".")) {
+      if (pythonPath.startsWith("/")) {
         if (fs.existsSync(pythonPath)) {
           return pythonPath;
         }
@@ -78,6 +83,14 @@ class GLMASRManager {
     delete env.PYTHONHOME;
     delete env.PYTHONPATH;
     delete env.VIRTUAL_ENV;
+
+    // NixOS CUDA 支持：添加 CUDA 运行时库路径
+    const nixosCudaLib = '/run/opengl-driver/lib';
+    if (fs.existsSync(nixosCudaLib)) {
+      env.LD_LIBRARY_PATH = env.LD_LIBRARY_PATH
+        ? `${nixosCudaLib}:${env.LD_LIBRARY_PATH}`
+        : nixosCudaLib;
+    }
 
     return env;
   }

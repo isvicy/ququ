@@ -18,8 +18,10 @@ dependencies = [
     # FunASR 语音识别
     "funasr>=1.2.7",
 
-    # GLM-ASR 语音识别（需要 transformers）
-    "transformers>=4.45.0",
+    # GLM-ASR 语音识别
+    # 注意：GLM-ASR-Nano-2512 要求 transformers==4.51.3
+    # 新版 transformers 移除了 WhisperFlashAttention2 类，会导致加载失败
+    "transformers==4.51.3",
 ]
 
 [tool.uv]
