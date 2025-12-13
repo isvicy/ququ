@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# ququ-ctl - 外部控制 ququ 录音的命令行工具
+# 用于在 Wayland 窗口管理器（如 niri、Hyprland）中绑定全局快捷键
+
+SOCKET_PATH="/tmp/ququ-${USER}.sock"
+
+usage() {
+    echo "用法: ququ-ctl <命令>"
+    echo ""
+    echo "命令:"
+    echo "  toggle  - 切换录音状态（开始/停止）"
+    echo "  start   - 开始录音"
+    echo "  stop    - 停止录音"
+    echo "  status  - 获取当前状态"
+    echo ""
+    echo "示例 niri 配置:"
+    echo '  binds {'
+    echo '    Mod+Shift+Space { spawn "ququ-ctl" "toggle"; }'
+    echo '  }'
+}
+
+if [ -z "$1" ]; then
+    usage
+    exit 1
+fi
+
+if [ ! -S "$SOCKET_PATH" ]; then
+    echo "错误: ququ 未运行或 socket 不存在"
+    echo "请先启动 ququ 应用"
+    exit 1
+fi
+
+# 发送命令到 socket
+echo "$1" | nc -U -q0 "$SOCKET_PATH" 2>/dev/null || echo "$1" | nc -U "$SOCKET_PATH"

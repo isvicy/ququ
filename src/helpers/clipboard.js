@@ -209,14 +209,137 @@ class ClipboardManager {
   }
 
   async pasteLinux(originalClipboard) {
+    // 检测是否为 Wayland 环境
+    const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' ||
+                      process.env.WAYLAND_DISPLAY != null;
+
+    if (isWayland) {
+      return this.pasteLinuxWayland(originalClipboard);
+    } else {
+      return this.pasteLinuxX11(originalClipboard);
+    }
+  }
+
+  // Wayland 环境：使用 wtype 输入文本，然后用 niri IPC 重置键盘焦点
+  // wtype 在 niri 上有键盘焦点 bug：https://github.com/YaLTeR/niri/issues/1546
+  // 解决方案：wtype 输入后用 niri msg 切换窗口焦点来重置键盘状态
+  async pasteLinuxWayland(originalClipboard) {
+    const textToType = clipboard.readText();
+
+    // 使用 wtype 输入文本
+    try {
+      await this.pasteLinuxWtype(textToType);
+
+      // wtype 输入成功后，用 niri IPC 切换焦点来重置键盘状态
+      // 这可以解决 niri 上的键盘焦点 bug
+      await this.resetKeyboardWithNiri();
+
+      // 同步到剪贴板方便后续使用
+      this.copyToWaylandClipboard(textToType);
+      return;
+    } catch (wtypeError) {
+      this.safeLog("⚠️ wtype 失败，文本已在剪贴板中", wtypeError.message);
+      await this.copyToWaylandClipboard(textToType);
+      throw new Error("Wayland 文本输入失败。文本已复制到剪贴板，请手动使用 Ctrl+Shift+V 粘贴。");
+    }
+  }
+
+  // 使用 wtype 直接输入文本
+  async pasteLinuxWtype(textToType) {
     return new Promise((resolve, reject) => {
+      this.safeLog("🐧 使用 wtype 输入文本");
+
+      const wtypeProcess = spawn("wtype", ["--", textToType]);
+
+      wtypeProcess.on("close", (code) => {
+        if (code === 0) {
+          this.safeLog("✅ wtype 输入成功");
+          resolve();
+        } else {
+          reject(new Error(`wtype 失败 (代码 ${code})`));
+        }
+      });
+
+      wtypeProcess.on("error", (error) => {
+        reject(new Error(`wtype 不可用: ${error.message}`));
+      });
+    });
+  }
+
+  // 使用 niri IPC 切换焦点来重置键盘状态（解决 niri + wtype 焦点 bug）
+  async resetKeyboardWithNiri() {
+    return new Promise((resolve) => {
+      this.safeLog("🔄 使用 niri IPC 重置键盘焦点");
+
+      // 切换到上一个窗口
+      const niri1 = spawn("niri", ["msg", "action", "focus-window-previous"]);
+
+      niri1.on("close", (code1) => {
+        if (code1 !== 0) {
+          this.safeLog("⚠️ niri 焦点切换失败，可能需要手动切换窗口");
+          resolve();
+          return;
+        }
+
+        // 短暂延迟后切换回来
+        setTimeout(() => {
+          const niri2 = spawn("niri", ["msg", "action", "focus-window-previous"]);
+
+          niri2.on("close", (code2) => {
+            if (code2 === 0) {
+              this.safeLog("✅ 键盘焦点已重置");
+            } else {
+              this.safeLog("⚠️ niri 焦点切回失败");
+            }
+            resolve();
+          });
+
+          niri2.on("error", () => {
+            resolve();
+          });
+        }, 50);
+      });
+
+      niri1.on("error", () => {
+        this.safeLog("⚠️ niri 不可用，如果键盘无响应请手动切换窗口焦点");
+        resolve();
+      });
+    });
+  }
+
+  // 复制到 Wayland 剪贴板
+  async copyToWaylandClipboard(text) {
+    return new Promise((resolve) => {
+      this.safeLog("📋 使用 wl-copy 写入 Wayland 剪贴板");
+      const wlCopyProcess = spawn("wl-copy", ["--", text]);
+
+      wlCopyProcess.on("close", (code) => {
+        if (code === 0) {
+          this.safeLog("✅ wl-copy 写入成功");
+        }
+        resolve();
+      });
+
+      wlCopyProcess.on("error", () => {
+        // wl-copy 失败也不阻塞
+        resolve();
+      });
+    });
+  }
+
+  // X11 环境：使用 xdotool 模拟 Ctrl+V
+  async pasteLinuxX11(originalClipboard) {
+    return new Promise((resolve, reject) => {
+      this.safeLog("🖥️ X11 环境检测到，使用 xdotool 模拟粘贴");
+
       const pasteProcess = spawn("xdotool", ["key", "ctrl+v"]);
 
       pasteProcess.on("close", (code) => {
         if (code === 0) {
-          // 文本粘贴成功
+          this.safeLog("✅ xdotool 粘贴成功");
           setTimeout(() => {
             clipboard.writeText(originalClipboard);
+            this.safeLog("🔄 原始剪贴板内容已恢复");
           }, 100);
           resolve();
         } else {

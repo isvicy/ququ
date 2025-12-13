@@ -1,6 +1,8 @@
 const { app, globalShortcut, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const { spawn } = require("child_process");
+const net = require("net");
+const fs = require("fs");
 
 // 导入日志管理器
 const LogManager = require("./src/helpers/logManager");
@@ -206,6 +208,78 @@ async function startApp() {
   logger.info('系统托盘设置完成');
 
   logger.info('应用启动完成');
+
+  // 启动 Unix Socket 服务器用于外部触发（Wayland 全局热键支持）
+  setupExternalTriggerSocket();
+}
+
+// Unix Socket 服务器 - 用于在 Wayland 下通过外部命令触发录音
+let socketServer = null;
+const SOCKET_PATH = `/tmp/ququ-${process.env.USER || 'user'}.sock`;
+
+function setupExternalTriggerSocket() {
+  // 清理可能存在的旧 socket 文件
+  try {
+    if (fs.existsSync(SOCKET_PATH)) {
+      fs.unlinkSync(SOCKET_PATH);
+    }
+  } catch (err) {
+    logger.warn('清理旧 socket 文件失败:', err.message);
+  }
+
+  socketServer = net.createServer((connection) => {
+    connection.on('data', (data) => {
+      const command = data.toString().trim();
+      logger.info('收到外部命令:', command);
+
+      switch (command) {
+        case 'toggle':
+          // 切换录音状态
+          triggerHotkey();
+          connection.write('OK: toggle\n');
+          break;
+        case 'start':
+          // 开始录音
+          triggerHotkey('start');
+          connection.write('OK: start\n');
+          break;
+        case 'stop':
+          // 停止录音
+          triggerHotkey('stop');
+          connection.write('OK: stop\n');
+          break;
+        case 'status':
+          // 获取状态
+          const status = hotkeyManager.getRecordingState() ? 'recording' : 'idle';
+          connection.write(`OK: ${status}\n`);
+          break;
+        default:
+          connection.write('ERROR: unknown command\n');
+      }
+      connection.end();
+    });
+  });
+
+  socketServer.listen(SOCKET_PATH, () => {
+    logger.info('外部触发 Socket 服务器已启动:', SOCKET_PATH);
+    // 设置 socket 文件权限
+    fs.chmodSync(SOCKET_PATH, 0o600);
+  });
+
+  socketServer.on('error', (err) => {
+    logger.error('Socket 服务器错误:', err.message);
+  });
+}
+
+// 触发热键事件
+function triggerHotkey(action = 'toggle') {
+  const mainWindow = windowManager.mainWindow;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    logger.info('通过外部命令触发热键事件:', action);
+    mainWindow.webContents.send('hotkey-triggered', { action });
+  } else {
+    logger.warn('主窗口不可用，无法触发热键');
+  }
 }
 
 // 应用事件处理器
@@ -227,6 +301,18 @@ app.on("activate", () => {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+
+  // 清理 socket 服务器
+  if (socketServer) {
+    socketServer.close();
+    try {
+      if (fs.existsSync(SOCKET_PATH)) {
+        fs.unlinkSync(SOCKET_PATH);
+      }
+    } catch (err) {
+      // 忽略清理错误
+    }
+  }
 });
 
 // 导出管理器供其他模块使用
