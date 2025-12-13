@@ -29,6 +29,8 @@ const WindowManager = require("./src/helpers/windowManager");
 const DatabaseManager = require("./src/helpers/database");
 const ClipboardManager = require("./src/helpers/clipboard");
 const FunASRManager = require("./src/helpers/funasrManager");
+const GLMASRManager = require("./src/helpers/glmAsrManager");
+const ASRManagerFactory = require("./src/helpers/asrManagerFactory");
 const TrayManager = require("./src/helpers/tray");
 const HotkeyManager = require("./src/helpers/hotkeyManager");
 const IPCHandlers = require("./src/helpers/ipcHandlers");
@@ -119,20 +121,31 @@ const environmentManager = new EnvironmentManager();
 const windowManager = new WindowManager();
 const databaseManager = new DatabaseManager();
 const clipboardManager = new ClipboardManager(logger); // 传递logger实例
-const funasrManager = new FunASRManager(logger); // 传递logger实例
+const asrManagerFactory = new ASRManagerFactory(logger); // ASR 管理器工厂
 const trayManager = new TrayManager();
 const hotkeyManager = new HotkeyManager();
+
+// ASR 管理器将在数据库初始化后根据设置创建
+let asrManager = null;
 
 // 初始化数据库
 const dataDirectory = environmentManager.ensureDataDirectory();
 databaseManager.initialize(dataDirectory);
 
+// 根据设置创建 ASR 管理器
+const asrEngineSetting = databaseManager.getSetting('asr_engine') || 'funasr';
+logger.info('ASR 引擎设置:', asrEngineSetting);
+asrManager = asrManagerFactory.createManager(asrEngineSetting);
+
 // 使用所有管理器初始化IPC处理器
+// 为了兼容性，同时提供 funasrManager 和 asrManager 属性
 const ipcHandlers = new IPCHandlers({
   environmentManager,
   databaseManager,
   clipboardManager,
-  funasrManager,
+  funasrManager: asrManager,  // 兼容旧代码
+  asrManager,                  // 新代码使用
+  asrManagerFactory,           // 用于切换引擎
   windowManager,
   hotkeyManager,
   logger, // 传递logger实例
@@ -171,10 +184,11 @@ async function startApp() {
     logger.info('macOS Dock已显示');
   }
 
-  // 在启动时初始化FunASR管理器（不等待以避免阻塞）
-  logger.info('开始初始化FunASR管理器...');
-  funasrManager.initializeAtStartup().catch((err) => {
-    logger.warn("FunASR在启动时不可用，这不是关键问题", err);
+  // 在启动时初始化 ASR 管理器（不等待以避免阻塞）
+  const engineName = asrManagerFactory.getEngineName();
+  logger.info(`开始初始化 ASR 管理器 (${engineName})...`);
+  asrManager.initializeAtStartup().catch((err) => {
+    logger.warn(`${engineName} 在启动时不可用，这不是关键问题`, err);
   });
 
   // 读取启动设置
@@ -334,7 +348,8 @@ module.exports = {
   windowManager,
   databaseManager,
   clipboardManager,
-  funasrManager,
+  asrManager,          // 当前使用的 ASR 管理器
+  asrManagerFactory,   // ASR 管理器工厂
   trayManager,
   hotkeyManager,
   logger

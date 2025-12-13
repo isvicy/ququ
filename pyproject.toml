@@ -1,14 +1,27 @@
 [project]
 name = "ququ"
 version = "0.1.0"
-description = "Add your description here"
+description = "开源免费的语音转文字应用，支持 FunASR 和 GLM-ASR-Nano"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "funasr>=1.2.7",
-    "librosa>=0.11.0",
+    # 核心依赖
     "numpy<2",
-    "torch==2.0.1",
-    "torchaudio==2.0.2",
-    "torchvision==0.15.2",
+    "librosa>=0.11.0",
+
+    # PyTorch - 使用较新版本以支持 GLM-ASR
+    # 注意：需要根据 CUDA 版本选择合适的 PyTorch
+    # 参考：https://pytorch.org/get-started/locally/
+    "torch>=2.1.0",
+    "torchaudio>=2.1.0",
+
+    # FunASR 语音识别
+    "funasr>=1.2.7",
+
+    # GLM-ASR 语音识别（需要 transformers）
+    "transformers>=4.45.0",
 ]
+
+[tool.uv]
+# 如果需要 CUDA 支持，可以指定 PyTorch 源
+# extra-index-url = ["https://download.pytorch.org/whl/cu121"]

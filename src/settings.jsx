@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
 import { toast, Toaster } from "sonner";
-import { Settings, Save, Eye, EyeOff, X, Loader2, TestTube, CheckCircle, XCircle, Mic, Shield, Monitor } from "lucide-react";
+import { Settings, Save, Eye, EyeOff, X, Loader2, TestTube, CheckCircle, XCircle, Mic, Shield, Monitor, AudioWaveform } from "lucide-react";
 import { usePermissions } from "./hooks/usePermissions";
 import PermissionCard from "./components/ui/permission-card";
 
@@ -12,7 +12,8 @@ const SettingsPage = () => {
     ai_base_url: "https://api.openai.com/v1",
     ai_model: "gpt-3.5-turbo",
     enable_ai_optimization: true,
-    start_minimized: false
+    start_minimized: false,
+    asr_engine: "funasr"  // "funasr" 或 "glm-asr"
   });
 
   const [customModel, setCustomModel] = useState(false);
@@ -54,7 +55,8 @@ const SettingsPage = () => {
           ai_base_url: allSettings.ai_base_url || "https://api.openai.com/v1",
           ai_model: allSettings.ai_model || "gpt-3.5-turbo",
           enable_ai_optimization: allSettings.enable_ai_optimization !== false, // 默认为true
-          start_minimized: allSettings.start_minimized || false
+          start_minimized: allSettings.start_minimized || false,
+          asr_engine: allSettings.asr_engine || "funasr"
         };
         setSettings(prev => ({ ...prev, ...loadedSettings }));
 
@@ -85,6 +87,7 @@ const SettingsPage = () => {
         await window.electronAPI.setSetting('ai_model', settings.ai_model);
         await window.electronAPI.setSetting('enable_ai_optimization', settings.enable_ai_optimization);
         await window.electronAPI.setSetting('start_minimized', settings.start_minimized);
+        await window.electronAPI.setSetting('asr_engine', settings.asr_engine);
 
         toast.success("设置保存成功");
       }
@@ -308,6 +311,80 @@ const SettingsPage = () => {
                     )}
                   </p>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 语音识别引擎设置 */}
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 mb-6">
+            <div className="p-6">
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 chinese-title">
+                  语音识别引擎
+                </h2>
+                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                  选择用于语音转文字的识别引擎。切换引擎后需要重启应用生效。
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {/* FunASR 选项 */}
+                <label
+                  className={`flex items-start space-x-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${
+                    settings.asr_engine === 'funasr'
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                      : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="asr_engine"
+                    value="funasr"
+                    checked={settings.asr_engine === 'funasr'}
+                    onChange={(e) => handleInputChange('asr_engine', e.target.value)}
+                    className="mt-1 w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-medium text-gray-900 dark:text-gray-100">FunASR (Paraformer)</span>
+                      <span className="px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded">默认</span>
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      阿里达摩院开源模型，中文识别准确，资源占用较低，支持 CPU 运行
+                    </p>
+                  </div>
+                </label>
+
+                {/* GLM-ASR 选项 */}
+                <label
+                  className={`flex items-start space-x-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${
+                    settings.asr_engine === 'glm-asr'
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                      : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="asr_engine"
+                    value="glm-asr"
+                    checked={settings.asr_engine === 'glm-asr'}
+                    onChange={(e) => handleInputChange('asr_engine', e.target.value)}
+                    className="mt-1 w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-medium text-gray-900 dark:text-gray-100">GLM-ASR-Nano</span>
+                      <span className="px-1.5 py-0.5 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded">推荐</span>
+                      <span className="px-1.5 py-0.5 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded">GPU</span>
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      智谱 2024.12 开源，1.5B 参数，中英混合识别最优，需要 GPU 和较新的 PyTorch
+                    </p>
+                    <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-900/20 rounded text-xs text-amber-700 dark:text-amber-300">
+                      ⚠️ 首次使用时模型会自动下载（约 3GB），需要 NVIDIA GPU
+                    </div>
+                  </div>
+                </label>
               </div>
             </div>
           </div>
