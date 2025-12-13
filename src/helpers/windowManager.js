@@ -254,9 +254,9 @@ class WindowManager {
     const primaryDisplay = screen.getPrimaryDisplay();
     const workArea = primaryDisplay.workArea;
 
-    // 指示器窗口尺寸
-    const indicatorWidth = 120;
-    const indicatorHeight = 40;
+    // 指示器窗口尺寸（紧凑细长条）
+    const indicatorWidth = 80;
+    const indicatorHeight = 28;
 
     // 位置：屏幕底部居中，距离底部 30px
     const x = Math.round(workArea.x + (workArea.width - indicatorWidth) / 2);
