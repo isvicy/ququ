@@ -75,6 +75,11 @@ export const useRecording = () => {
         setIsRecording(false);
         setIsProcessing(true);
 
+        // 更新指示器为处理状态
+        if (window.electronAPI && window.electronAPI.updateIndicatorState) {
+          window.electronAPI.updateIndicatorState('processing');
+        }
+
         try {
           // 创建音频Blob
           const audioBlob = new Blob(audioChunksRef.current, {
@@ -96,11 +101,21 @@ export const useRecording = () => {
         setError(`录音错误: ${event.error?.message || '未知错误'}`);
         setIsRecording(false);
         setIsProcessing(false);
+
+        // 恢复指示器为空闲状态
+        if (window.electronAPI && window.electronAPI.updateIndicatorState) {
+          window.electronAPI.updateIndicatorState('idle');
+        }
       };
 
       // 开始录音
       mediaRecorder.start(1000); // 每秒收集一次数据
       setIsRecording(true);
+
+      // 更新指示器状态为录音中
+      if (window.electronAPI && window.electronAPI.updateIndicatorState) {
+        window.electronAPI.updateIndicatorState('recording');
+      }
 
     } catch (err) {
       setError(`无法开始录音: ${err.message}`);
@@ -154,6 +169,12 @@ export const useRecording = () => {
 
           // 异步处理AI优化和保存（只保存一次）
           setIsOptimizing(true);
+
+          // 更新指示器为AI优化状态
+          if (window.electronAPI && window.electronAPI.updateIndicatorState) {
+            window.electronAPI.updateIndicatorState('optimizing');
+          }
+
           setTimeout(async () => {
             try {
               // 从设置中读取是否启用AI优化
@@ -231,6 +252,11 @@ export const useRecording = () => {
               }
             } finally {
               setIsOptimizing(false);
+
+              // 恢复指示器为空闲状态
+              if (window.electronAPI && window.electronAPI.updateIndicatorState) {
+                window.electronAPI.updateIndicatorState('idle');
+              }
             }
           }, 100);
 
@@ -245,6 +271,10 @@ export const useRecording = () => {
         return mockResult;
       }
     } catch (err) {
+      // 处理失败时恢复指示器为空闲状态
+      if (window.electronAPI && window.electronAPI.updateIndicatorState) {
+        window.electronAPI.updateIndicatorState('idle');
+      }
       throw new Error(`音频处理失败: ${err.message}`);
     } finally {
       processingRef.current.isProcessingAudio = false;
@@ -352,6 +382,11 @@ export const useRecording = () => {
     setIsProcessing(false);
     setError(null);
     audioChunksRef.current = [];
+
+    // 恢复指示器为空闲状态
+    if (window.electronAPI && window.electronAPI.updateIndicatorState) {
+      window.electronAPI.updateIndicatorState('idle');
+    }
   }, []);
 
   // 获取录音权限状态

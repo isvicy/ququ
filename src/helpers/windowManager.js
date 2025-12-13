@@ -1,4 +1,4 @@
-const { BrowserWindow } = require("electron");
+const { BrowserWindow, screen } = require("electron");
 const path = require("path");
 
 class WindowManager {
@@ -7,6 +7,7 @@ class WindowManager {
     this.controlPanelWindow = null;
     this.historyWindow = null;
     this.settingsWindow = null;
+    this.indicatorWindow = null;
   }
 
   async createMainWindow(options = {}) {
@@ -237,6 +238,100 @@ class WindowManager {
     }
     if (this.settingsWindow) {
       this.settingsWindow.close();
+    }
+    if (this.indicatorWindow) {
+      this.indicatorWindow.close();
+    }
+  }
+
+  // 录音状态指示器窗口
+  async createIndicatorWindow() {
+    if (this.indicatorWindow) {
+      return this.indicatorWindow;
+    }
+
+    // 获取主显示器工作区域
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const workArea = primaryDisplay.workArea;
+
+    // 指示器窗口尺寸
+    const indicatorWidth = 120;
+    const indicatorHeight = 40;
+
+    // 位置：屏幕底部居中，距离底部 30px
+    const x = Math.round(workArea.x + (workArea.width - indicatorWidth) / 2);
+    const y = workArea.y + workArea.height - indicatorHeight - 30;
+
+    // 检测是否为 Wayland
+    const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' ||
+                      process.env.WAYLAND_DISPLAY != null;
+
+    this.indicatorWindow = new BrowserWindow({
+      width: indicatorWidth,
+      height: indicatorHeight,
+      x: x,
+      y: y,
+      title: "ququ-indicator", // 用于 niri 窗口规则匹配
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      resizable: false,
+      skipTaskbar: true,
+      focusable: false,
+      hasShadow: false,
+      show: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, "..", "..", "preload.js"),
+      },
+    });
+
+    // Wayland 下窗口位置可能需要在创建后设置
+    if (isWayland) {
+      this.indicatorWindow.setPosition(x, y);
+    }
+
+    // 加载指示器页面
+    const isDev = process.env.NODE_ENV === "development";
+
+    if (isDev) {
+      await this.indicatorWindow.loadURL("http://localhost:5173/indicator.html");
+    } else {
+      await this.indicatorWindow.loadFile(
+        path.join(__dirname, "..", "dist", "indicator.html")
+      );
+    }
+
+    this.indicatorWindow.on("closed", () => {
+      this.indicatorWindow = null;
+    });
+
+    return this.indicatorWindow;
+  }
+
+  async showIndicator(state = "recording") {
+    if (!this.indicatorWindow) {
+      await this.createIndicatorWindow();
+    }
+
+    // 发送状态到指示器窗口
+    if (this.indicatorWindow && !this.indicatorWindow.isDestroyed()) {
+      this.indicatorWindow.webContents.send("indicator-state", state);
+      // 使用 showInactive() 避免抢占焦点
+      this.indicatorWindow.showInactive();
+    }
+  }
+
+  hideIndicator() {
+    if (this.indicatorWindow && !this.indicatorWindow.isDestroyed()) {
+      this.indicatorWindow.hide();
+    }
+  }
+
+  updateIndicatorState(state) {
+    if (this.indicatorWindow && !this.indicatorWindow.isDestroyed()) {
+      this.indicatorWindow.webContents.send("indicator-state", state);
     }
   }
 }

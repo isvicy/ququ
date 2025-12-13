@@ -302,6 +302,22 @@ class IPCHandlers {
       return true;
     });
 
+    // 录音状态指示器
+    ipcMain.handle("show-indicator", async (event, state) => {
+      await this.windowManager.showIndicator(state);
+      return true;
+    });
+
+    ipcMain.handle("hide-indicator", () => {
+      this.windowManager.hideIndicator();
+      return true;
+    });
+
+    ipcMain.handle("update-indicator-state", (event, state) => {
+      this.windowManager.updateIndicatorState(state);
+      return true;
+    });
+
     ipcMain.handle("close-app", () => {
       require("electron").app.quit();
     });

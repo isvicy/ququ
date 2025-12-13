@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>录音指示器</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: transparent;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    .indicator {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 20px;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(10px);
+      border-radius: 20px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    /* 录音状态 - 红色波形 */
+    .recording .bar {
+      width: 4px;
+      height: 20px;
+      background: #ef4444;
+      border-radius: 2px;
+      animation: wave 0.8s ease-in-out infinite;
+    }
+
+    .recording .bar:nth-child(1) { animation-delay: 0s; }
+    .recording .bar:nth-child(2) { animation-delay: 0.1s; }
+    .recording .bar:nth-child(3) { animation-delay: 0.2s; }
+    .recording .bar:nth-child(4) { animation-delay: 0.3s; }
+    .recording .bar:nth-child(5) { animation-delay: 0.4s; }
+
+    @keyframes wave {
+      0%, 100% { height: 8px; opacity: 0.6; }
+      50% { height: 20px; opacity: 1; }
+    }
+
+    /* 识别状态 - 蓝色脉冲点 */
+    .processing .dot {
+      width: 8px;
+      height: 8px;
+      background: #3b82f6;
+      border-radius: 50%;
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    .processing .dot:nth-child(1) { animation-delay: 0s; }
+    .processing .dot:nth-child(2) { animation-delay: 0.2s; }
+    .processing .dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(0.6); opacity: 0.4; }
+      50% { transform: scale(1.2); opacity: 1; }
+    }
+
+    /* AI优化状态 - 紫色闪烁 */
+    .optimizing .spark {
+      width: 6px;
+      height: 6px;
+      background: #a855f7;
+      border-radius: 50%;
+      animation: sparkle 0.6s ease-in-out infinite alternate;
+    }
+
+    .optimizing .spark:nth-child(1) { animation-delay: 0s; }
+    .optimizing .spark:nth-child(2) { animation-delay: 0.1s; transform: translateY(-4px); }
+    .optimizing .spark:nth-child(3) { animation-delay: 0.2s; }
+    .optimizing .spark:nth-child(4) { animation-delay: 0.1s; transform: translateY(4px); }
+    .optimizing .spark:nth-child(5) { animation-delay: 0s; }
+
+    @keyframes sparkle {
+      0% { opacity: 0.3; transform: scale(0.8); }
+      100% { opacity: 1; transform: scale(1.3); }
+    }
+
+    /* 空闲状态 - 灰色小点 */
+    .idle .idle-dot {
+      width: 8px;
+      height: 8px;
+      background: #6b7280;
+      border-radius: 50%;
+      opacity: 0.6;
+    }
+
+    /* 隐藏非当前状态 */
+    .indicator > div {
+      display: none;
+    }
+
+    .indicator.idle .idle-anim,
+    .indicator.recording .recording-anim,
+    .indicator.processing .processing-anim,
+    .indicator.optimizing .optimizing-anim {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="indicator" id="indicator">
+    <!-- 空闲状态 -->
+    <div class="idle-anim">
+      <div class="idle-dot"></div>
+    </div>
+
+    <!-- 录音动画 -->
+    <div class="recording-anim">
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+    </div>
+
+    <!-- 识别动画 -->
+    <div class="processing-anim">
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
+
+    <!-- AI优化动画 -->
+    <div class="optimizing-anim">
+      <div class="spark"></div>
+      <div class="spark"></div>
+      <div class="spark"></div>
+      <div class="spark"></div>
+      <div class="spark"></div>
+    </div>
+  </div>
+
+  <script>
+    const indicator = document.getElementById('indicator');
+
+    // 监听状态变化
+    if (window.electronAPI && window.electronAPI.onIndicatorState) {
+      window.electronAPI.onIndicatorState((event, state) => {
+        // 移除所有状态类
+        indicator.classList.remove('idle', 'recording', 'processing', 'optimizing');
+        // 添加新状态类
+        indicator.classList.add(state || 'idle');
+      });
+    }
+
+    // 默认显示空闲状态
+    indicator.classList.add('idle');
+  </script>
+</body>
+</html>

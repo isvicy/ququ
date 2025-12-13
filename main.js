@@ -211,6 +211,15 @@ async function startApp() {
   await trayManager.createTray();
   logger.info('系统托盘设置完成');
 
+  // 创建并显示录音状态指示器（常驻）
+  try {
+    logger.info('创建录音状态指示器...');
+    await windowManager.showIndicator('idle');
+    logger.info('录音状态指示器已显示');
+  } catch (error) {
+    logger.error("创建录音状态指示器时出错:", error);
+  }
+
   logger.info('应用启动完成');
 
   // 启动 Unix Socket 服务器用于外部触发（Wayland 全局热键支持）

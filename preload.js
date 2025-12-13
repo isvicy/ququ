@@ -154,7 +154,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // 性能监控
   getPerformanceStats: () => ipcRenderer.invoke("get-performance-stats"),
-  clearPerformanceStats: () => ipcRenderer.invoke("clear-performance-stats")
+  clearPerformanceStats: () => ipcRenderer.invoke("clear-performance-stats"),
+
+  // 录音指示器
+  showIndicator: (state) => ipcRenderer.invoke("show-indicator", state),
+  hideIndicator: () => ipcRenderer.invoke("hide-indicator"),
+  updateIndicatorState: (state) => ipcRenderer.invoke("update-indicator-state", state),
+  onIndicatorState: (callback) => {
+    ipcRenderer.on("indicator-state", callback);
+    return () => ipcRenderer.removeListener("indicator-state", callback);
+  }
 });
 
 // 添加一些实用的常量
