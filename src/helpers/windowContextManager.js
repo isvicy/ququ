@@ -5,7 +5,7 @@
  * 目前仅支持 Niri compositor，其他环境会优雅降级。
  */
 
-const net = require('net');
+const { execFile } = require('child_process');
 
 // 上下文类型定义
 const CONTEXT_TYPES = {
@@ -81,52 +81,21 @@ class WindowContextManager {
       return null;
     }
 
-    return new Promise((resolve, reject) => {
-      const client = net.createConnection(this.niriSocket);
-      let data = '';
-      let resolved = false;
-
-      const timeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          client.destroy();
-          this.logger?.warn('WindowContextManager: 获取窗口信息超时');
+    return new Promise((resolve) => {
+      execFile('niri', ['msg', '--json', 'focused-window'], { timeout: 1000 }, (error, stdout, stderr) => {
+        if (error) {
+          this.logger?.warn('WindowContextManager: 获取窗口信息失败', error.message);
           resolve(null);
+          return;
         }
-      }, 1000);
-
-      client.on('connect', () => {
-        client.write(JSON.stringify('FocusedWindow') + '\n');
-      });
-
-      client.on('data', (chunk) => {
-        data += chunk.toString();
-      });
-
-      client.on('end', () => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timeout);
 
         try {
-          const response = JSON.parse(data);
-          if (response.Ok && response.Ok.FocusedWindow) {
-            resolve(response.Ok.FocusedWindow);
-          } else {
-            resolve(null);
-          }
+          const window = JSON.parse(stdout);
+          resolve(window);
         } catch (e) {
           this.logger?.error('WindowContextManager: 解析窗口信息失败', e);
           resolve(null);
         }
-      });
-
-      client.on('error', (err) => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timeout);
-        this.logger?.error('WindowContextManager: 连接 Niri socket 失败', err);
-        resolve(null);
       });
     });
   }
