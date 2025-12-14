@@ -11,6 +11,7 @@ const SettingsPage = () => {
     ai_api_key: "",
     ai_base_url: "https://api.openai.com/v1",
     ai_model: "gpt-3.5-turbo",
+    ai_temperature: 0.1,  // 新增：AI 温度参数
     enable_ai_optimization: true,
     start_minimized: false,
     asr_engine: "funasr"  // "funasr" 或 "glm-asr"
@@ -54,6 +55,7 @@ const SettingsPage = () => {
           ai_api_key: allSettings.ai_api_key || "",
           ai_base_url: allSettings.ai_base_url || "https://api.openai.com/v1",
           ai_model: allSettings.ai_model || "gpt-3.5-turbo",
+          ai_temperature: allSettings.ai_temperature ?? 0.1,  // 默认 0.1
           enable_ai_optimization: allSettings.enable_ai_optimization !== false, // 默认为true
           start_minimized: allSettings.start_minimized || false,
           asr_engine: allSettings.asr_engine || "funasr"
@@ -85,6 +87,7 @@ const SettingsPage = () => {
         await window.electronAPI.setSetting('ai_api_key', settings.ai_api_key);
         await window.electronAPI.setSetting('ai_base_url', settings.ai_base_url);
         await window.electronAPI.setSetting('ai_model', settings.ai_model);
+        await window.electronAPI.setSetting('ai_temperature', settings.ai_temperature);
         await window.electronAPI.setSetting('enable_ai_optimization', settings.enable_ai_optimization);
         await window.electronAPI.setSetting('start_minimized', settings.start_minimized);
         await window.electronAPI.setSetting('asr_engine', settings.asr_engine);
@@ -549,6 +552,33 @@ const SettingsPage = () => {
                   
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     选择用于文本优化的AI模型。推荐使用阿里云Qwen3模型获得更好的中文处理效果。
+                  </p>
+                </div>
+
+                {/* Temperature */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Temperature
+                    <span className="text-xs text-gray-500 ml-2">
+                      (越低输出越稳定，推荐 0.1-0.3)
+                    </span>
+                  </label>
+                  <div className="flex items-center space-x-3">
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      value={settings.ai_temperature}
+                      onChange={(e) => handleInputChange('ai_temperature', parseFloat(e.target.value))}
+                      className="flex-1 h-2 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <span className="text-sm font-mono w-10 text-center text-gray-700 dark:text-gray-300">
+                      {settings.ai_temperature.toFixed(1)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    控制 AI 输出的随机性。不同模型的最佳值可能不同，建议测试后调整。
                   </p>
                 </div>
               </div>
