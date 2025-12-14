@@ -1002,43 +1002,24 @@ class IPCHandlers {
 原文：{text}`;
   }
 
-  // 获取上下文特定的 prompt 提示
-  _getContextHint(contextType) {
-    const hints = {
-      coding: `
-注意：当前在编程环境中，请特别注意：
-- 保留代码相关术语的原始格式（camelCase、snake_case、PascalCase）
-- 识别编程语言名称、框架名称、库名称
-- 保留英文技术术语，不要翻译
-- 识别可能的变量名、函数名、类名`,
+  // 构建上下文提示（直接告诉模型窗口信息，让模型自己判断）
+  _buildContextHint(context) {
+    if (!context || !context.appId) {
+      return '';
+    }
 
-      terminal: `
-注意：当前在终端环境中，请特别注意：
-- 识别 Shell 命令和参数
-- 保留命令行格式和特殊字符
-- 识别文件路径格式
-- 保留英文命令名称`,
+    const windowInfo = context.title
+      ? `${context.appId} - ${context.title}`
+      : context.appId;
 
-      browser: `
-注意：当前在浏览器环境中，请特别注意：
-- 使用自然、流畅的语言风格
-- 识别网站名称和网络术语
-- 适当保留口语化表达`,
-
-      communication: `
-注意：当前在聊天环境中，请特别注意：
-- 保留口语化和情感化表达
-- 识别网络用语和表情描述
-- 保持轻松自然的语气`,
-
-      writing: `
-注意：当前在写作环境中，请特别注意：
-- 使用规范的书面语
-- 注意段落结构
-- 适当优化句式表达`
-    };
-
-    return hints[contextType] || '';
+    return `
+当前使用场景：用户正在「${windowInfo}」窗口中。
+请根据这个场景调整优化策略，例如：
+- 终端/命令行：保留命令、参数、路径格式
+- 代码编辑器：保留技术术语、变量名格式（camelCase/snake_case）
+- 浏览器：根据网页内容判断，技术文档保留术语，社交媒体保留口语
+- 聊天软件：保留口语化表达和情感语气
+- 写作工具：使用规范书面语`;
   }
 
   // 构建优化 prompt（支持用户自定义和上下文感知）
@@ -1046,18 +1027,16 @@ class IPCHandlers {
     const customPrompt = await this.databaseManager.getSetting('ai_system_prompt');
     let promptTemplate = customPrompt || this._getDefaultPrompt();
 
-    // 如果有上下文信息且不是通用类型，添加上下文提示
-    if (context && context.type && context.type !== 'general') {
-      const contextHint = this._getContextHint(context.type);
-      if (contextHint) {
-        // 在 "直接输出结果。" 之前插入上下文提示
-        promptTemplate = promptTemplate.replace(
-          '直接输出结果。',
-          `${contextHint}
+    // 如果有上下文信息，添加窗口信息让模型自己判断
+    if (context && context.appId) {
+      const contextHint = this._buildContextHint(context);
+      // 在 "直接输出结果。" 之前插入上下文提示
+      promptTemplate = promptTemplate.replace(
+        '直接输出结果。',
+        `${contextHint}
 
 直接输出结果。`
-        );
-      }
+      );
     }
 
     return promptTemplate.replace('{text}', text);
