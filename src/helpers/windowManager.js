@@ -334,12 +334,6 @@ class WindowManager {
       this.indicatorWindow.webContents.send("indicator-state", state);
     }
   }
-
-  updateIndicatorContext(context) {
-    if (this.indicatorWindow && !this.indicatorWindow.isDestroyed()) {
-      this.indicatorWindow.webContents.send("indicator-context", context);
-    }
-  }
 }
 
 module.exports = WindowManager;

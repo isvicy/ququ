@@ -118,15 +118,6 @@ class IPCHandlers {
       return this.windowContextManager?.isSupported() || false;
     });
 
-    ipcMain.handle("update-indicator-context", async () => {
-      if (!this.windowContextManager || !this.windowManager) {
-        return { success: false };
-      }
-      const context = await this.windowContextManager.getCurrentContext();
-      this.windowManager.updateIndicatorContext(context);
-      return { success: true, context };
-    });
-
     // 音频转录相关
     ipcMain.handle("transcribe-audio", async (event, audioData, options) => {
       return await this.funasrManager.transcribeAudio(audioData, options);

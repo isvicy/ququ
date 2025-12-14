@@ -34,7 +34,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // 窗口上下文
   getWindowContext: () => ipcRenderer.invoke("get-window-context"),
   isWindowContextSupported: () => ipcRenderer.invoke("is-window-context-supported"),
-  updateIndicatorContext: () => ipcRenderer.invoke("update-indicator-context"),
 
   // 剪贴板操作
   pasteText: (text) => ipcRenderer.invoke("paste-text", text),
@@ -168,10 +167,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onIndicatorState: (callback) => {
     ipcRenderer.on("indicator-state", callback);
     return () => ipcRenderer.removeListener("indicator-state", callback);
-  },
-  onIndicatorContext: (callback) => {
-    ipcRenderer.on("indicator-context", callback);
-    return () => ipcRenderer.removeListener("indicator-context", callback);
   }
 });
 

@@ -25,35 +25,12 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 3px;
       padding: 6px 14px;
       background: rgba(0, 0, 0, 0.75);
       backdrop-filter: blur(10px);
       border-radius: 14px;
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
-    }
-
-    /* 上下文图标 */
-    .context-icon {
-      font-size: 12px;
-      opacity: 0.9;
-      display: none;
-    }
-
-    .indicator.has-context .context-icon {
-      display: block;
-    }
-
-    /* 分隔线 */
-    .separator {
-      width: 1px;
-      height: 12px;
-      background: rgba(255, 255, 255, 0.2);
-      display: none;
-    }
-
-    .indicator.has-context .separator {
-      display: block;
     }
 
     /* 录音状态 - 红色波形 */
@@ -140,12 +117,6 @@
 </head>
 <body>
   <div class="indicator" id="indicator">
-    <!-- 上下文图标 -->
-    <span class="context-icon" id="context-icon">🎤</span>
-
-    <!-- 分隔线 -->
-    <div class="separator"></div>
-
     <!-- 空闲状态 -->
     <div class="state-anim idle-anim">
       <div class="idle-dot"></div>
@@ -179,7 +150,6 @@
 
   <script>
     const indicator = document.getElementById('indicator');
-    const contextIcon = document.getElementById('context-icon');
 
     // 监听状态变化
     if (window.electronAPI && window.electronAPI.onIndicatorState) {
@@ -188,18 +158,6 @@
         indicator.classList.remove('idle', 'recording', 'processing', 'optimizing');
         // 添加新状态类
         indicator.classList.add(state || 'idle');
-      });
-    }
-
-    // 监听上下文变化
-    if (window.electronAPI && window.electronAPI.onIndicatorContext) {
-      window.electronAPI.onIndicatorContext((event, context) => {
-        if (context && context.supported && context.type !== 'general') {
-          contextIcon.textContent = context.icon || '🎤';
-          indicator.classList.add('has-context');
-        } else {
-          indicator.classList.remove('has-context');
-        }
       });
     }
 
