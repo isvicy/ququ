@@ -117,6 +117,11 @@ export const useRecording = () => {
         window.electronAPI.updateIndicatorState('recording');
       }
 
+      // 更新指示器上下文（显示当前应用图标）
+      if (window.electronAPI && window.electronAPI.updateIndicatorContext) {
+        window.electronAPI.updateIndicatorContext();
+      }
+
     } catch (err) {
       setError(`无法开始录音: ${err.message}`);
       setIsRecording(false);
