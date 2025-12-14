@@ -7,14 +7,58 @@ import { usePermissions } from "./hooks/usePermissions";
 import PermissionCard from "./components/ui/permission-card";
 
 const SettingsPage = () => {
+  // 默认 system prompt
+  const DEFAULT_SYSTEM_PROMPT = `清理语音转录文本。根据内容特征自行判断处理力度。
+
+规则：
+- 移除填充词（呃、嗯、那个、就是说）
+- 处理重复和自我修正
+- 修正明显错字
+- 保留语气词（啊、呀、呢、吧）
+- 列表内容用换行和编号格式化
+- 长内容在话题转换处分段
+
+示例：
+
+输入：我想买一个新的手鸡
+输出：我想买一个新的手机
+
+输入：今天天气蛮不错的呀
+输出：今天天气蛮不错的呀
+
+输入：呃那个我觉得可以
+输出：我觉得可以
+
+输入：会议定在周三，呃不对，是周四下午三点
+输出：会议定在周四下午三点
+
+输入：首先要准备材料然后要搅拌最后要烘烤
+输出：
+1. 首先要准备材料
+2. 然后要搅拌
+3. 最后要烘烤
+
+输入：呃我想说三点第一个就是那个关于预算的问题然后第二个是时间安排最后就是人员分配
+输出：
+我想说三点：
+
+1. 关于预算的问题
+2. 时间安排
+3. 人员分配
+
+直接输出结果。
+
+原文：{text}`;
+
   const [settings, setSettings] = useState({
     ai_api_key: "",
     ai_base_url: "https://api.openai.com/v1",
     ai_model: "gpt-3.5-turbo",
-    ai_temperature: 0.1,  // 新增：AI 温度参数
+    ai_temperature: 0.1,
+    ai_system_prompt: "",  // 空表示使用默认值
     enable_ai_optimization: true,
     start_minimized: false,
-    asr_engine: "funasr"  // "funasr" 或 "glm-asr"
+    asr_engine: "funasr"
   });
 
   const [customModel, setCustomModel] = useState(false);
@@ -55,8 +99,9 @@ const SettingsPage = () => {
           ai_api_key: allSettings.ai_api_key || "",
           ai_base_url: allSettings.ai_base_url || "https://api.openai.com/v1",
           ai_model: allSettings.ai_model || "gpt-3.5-turbo",
-          ai_temperature: allSettings.ai_temperature ?? 0.1,  // 默认 0.1
-          enable_ai_optimization: allSettings.enable_ai_optimization !== false, // 默认为true
+          ai_temperature: allSettings.ai_temperature ?? 0.1,
+          ai_system_prompt: allSettings.ai_system_prompt || "",
+          enable_ai_optimization: allSettings.enable_ai_optimization !== false,
           start_minimized: allSettings.start_minimized || false,
           asr_engine: allSettings.asr_engine || "funasr"
         };
@@ -88,6 +133,7 @@ const SettingsPage = () => {
         await window.electronAPI.setSetting('ai_base_url', settings.ai_base_url);
         await window.electronAPI.setSetting('ai_model', settings.ai_model);
         await window.electronAPI.setSetting('ai_temperature', settings.ai_temperature);
+        await window.electronAPI.setSetting('ai_system_prompt', settings.ai_system_prompt);
         await window.electronAPI.setSetting('enable_ai_optimization', settings.enable_ai_optimization);
         await window.electronAPI.setSetting('start_minimized', settings.start_minimized);
         await window.electronAPI.setSetting('asr_engine', settings.asr_engine);
@@ -579,6 +625,32 @@ const SettingsPage = () => {
                   </div>
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     控制 AI 输出的随机性。不同模型的最佳值可能不同，建议测试后调整。
+                  </p>
+                </div>
+
+                {/* System Prompt */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                      System Prompt
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleInputChange('ai_system_prompt', '')}
+                      className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                    >
+                      恢复默认
+                    </button>
+                  </div>
+                  <textarea
+                    value={settings.ai_system_prompt || DEFAULT_SYSTEM_PROMPT}
+                    onChange={(e) => handleInputChange('ai_system_prompt', e.target.value)}
+                    placeholder={DEFAULT_SYSTEM_PROMPT}
+                    rows={12}
+                    className="w-full px-3 py-2 text-xs font-mono border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 resize-y"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    自定义 AI 文本优化的 prompt。使用 <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">{'{text}'}</code> 作为原文占位符。留空或点击"恢复默认"使用内置 prompt。
                   </p>
                 </div>
               </div>

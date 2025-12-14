@@ -928,8 +928,8 @@ class IPCHandlers {
     });
   }
 
-  // 构建优化 prompt（单一 prompt + 多场景 few-shot 例子）
-  _buildOptimizePrompt(text) {
+  // 默认 system prompt
+  _getDefaultPrompt() {
     return `清理语音转录文本。根据内容特征自行判断处理力度。
 
 规则：
@@ -970,7 +970,14 @@ class IPCHandlers {
 
 直接输出结果。
 
-原文：${text}`;
+原文：{text}`;
+  }
+
+  // 构建优化 prompt（支持用户自定义）
+  async _buildOptimizePrompt(text) {
+    const customPrompt = await this.databaseManager.getSetting('ai_system_prompt');
+    const promptTemplate = customPrompt || this._getDefaultPrompt();
+    return promptTemplate.replace('{text}', text);
   }
 
   // AI文本处理方法
@@ -988,7 +995,7 @@ class IPCHandlers {
       // 根据 mode 选择 prompt
       let prompt;
       if (mode === 'optimize') {
-        prompt = this._buildOptimizePrompt(text);
+        prompt = await this._buildOptimizePrompt(text);
       } else if (mode === 'summarize') {
         prompt = `请总结以下文本的主要内容，提取关键信息，直接输出结果：\n\n${text}`;
       } else if (mode === 'format') {
@@ -996,7 +1003,7 @@ class IPCHandlers {
       } else if (mode === 'correct') {
         prompt = `请纠正以下文本中的语法错误、错别字和语音识别错误，保持原意不变，直接输出结果：\n\n${text}`;
       } else {
-        prompt = this._buildOptimizePrompt(text);
+        prompt = await this._buildOptimizePrompt(text);
       }
 
       const baseUrl = await this.databaseManager.getSetting('ai_base_url') || 'https://api.openai.com/v1';
