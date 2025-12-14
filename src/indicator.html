@@ -25,12 +25,35 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 3px;
+      gap: 6px;
       padding: 6px 14px;
       background: rgba(0, 0, 0, 0.75);
       backdrop-filter: blur(10px);
       border-radius: 14px;
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    /* 上下文图标 */
+    .context-icon {
+      font-size: 12px;
+      opacity: 0.9;
+      display: none;
+    }
+
+    .indicator.has-context .context-icon {
+      display: block;
+    }
+
+    /* 分隔线 */
+    .separator {
+      width: 1px;
+      height: 12px;
+      background: rgba(255, 255, 255, 0.2);
+      display: none;
+    }
+
+    .indicator.has-context .separator {
+      display: block;
     }
 
     /* 录音状态 - 红色波形 */
@@ -101,7 +124,7 @@
     }
 
     /* 隐藏非当前状态 */
-    .indicator > div {
+    .indicator > .state-anim {
       display: none;
     }
 
@@ -117,13 +140,19 @@
 </head>
 <body>
   <div class="indicator" id="indicator">
+    <!-- 上下文图标 -->
+    <span class="context-icon" id="context-icon">🎤</span>
+
+    <!-- 分隔线 -->
+    <div class="separator"></div>
+
     <!-- 空闲状态 -->
-    <div class="idle-anim">
+    <div class="state-anim idle-anim">
       <div class="idle-dot"></div>
     </div>
 
     <!-- 录音动画 -->
-    <div class="recording-anim">
+    <div class="state-anim recording-anim">
       <div class="bar"></div>
       <div class="bar"></div>
       <div class="bar"></div>
@@ -132,14 +161,14 @@
     </div>
 
     <!-- 识别动画 -->
-    <div class="processing-anim">
+    <div class="state-anim processing-anim">
       <div class="dot"></div>
       <div class="dot"></div>
       <div class="dot"></div>
     </div>
 
     <!-- AI优化动画 -->
-    <div class="optimizing-anim">
+    <div class="state-anim optimizing-anim">
       <div class="spark"></div>
       <div class="spark"></div>
       <div class="spark"></div>
@@ -150,6 +179,7 @@
 
   <script>
     const indicator = document.getElementById('indicator');
+    const contextIcon = document.getElementById('context-icon');
 
     // 监听状态变化
     if (window.electronAPI && window.electronAPI.onIndicatorState) {
@@ -158,6 +188,18 @@
         indicator.classList.remove('idle', 'recording', 'processing', 'optimizing');
         // 添加新状态类
         indicator.classList.add(state || 'idle');
+      });
+    }
+
+    // 监听上下文变化
+    if (window.electronAPI && window.electronAPI.onIndicatorContext) {
+      window.electronAPI.onIndicatorContext((event, context) => {
+        if (context && context.supported && context.type !== 'general') {
+          contextIcon.textContent = context.icon || '🎤';
+          indicator.classList.add('has-context');
+        } else {
+          indicator.classList.remove('has-context');
+        }
       });
     }
 

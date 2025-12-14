@@ -34,6 +34,7 @@ const ASRManagerFactory = require("./src/helpers/asrManagerFactory");
 const TrayManager = require("./src/helpers/tray");
 const HotkeyManager = require("./src/helpers/hotkeyManager");
 const IPCHandlers = require("./src/helpers/ipcHandlers");
+const { WindowContextManager } = require("./src/helpers/windowContextManager");
 
 // 设置生产环境PATH
 function setupProductionPath() {
@@ -124,6 +125,7 @@ const clipboardManager = new ClipboardManager(logger); // 传递logger实例
 const asrManagerFactory = new ASRManagerFactory(logger); // ASR 管理器工厂
 const trayManager = new TrayManager();
 const hotkeyManager = new HotkeyManager();
+const windowContextManager = new WindowContextManager(logger); // 窗口上下文管理器
 
 // ASR 管理器将在数据库初始化后根据设置创建
 let asrManager = null;
@@ -148,7 +150,8 @@ const ipcHandlers = new IPCHandlers({
   asrManagerFactory,           // 用于切换引擎
   windowManager,
   hotkeyManager,
-  logger, // 传递logger实例
+  windowContextManager,        // 窗口上下文管理器
+  logger,
 });
 
 // 主应用启动函数

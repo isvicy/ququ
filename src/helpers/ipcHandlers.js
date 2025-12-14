@@ -8,11 +8,12 @@ class IPCHandlers {
     this.funasrManager = managers.funasrManager;
     this.windowManager = managers.windowManager;
     this.hotkeyManager = managers.hotkeyManager;
-    this.logger = managers.logger; // 添加logger引用
-    
+    this.windowContextManager = managers.windowContextManager;
+    this.logger = managers.logger;
+
     // 跟踪F2热键注册状态
     this.f2RegisteredSenders = new Set();
-    
+
     this.setupHandlers();
   }
 
@@ -96,6 +97,34 @@ class IPCHandlers {
 
     ipcMain.handle("check-ai-status", async (event, testConfig = null) => {
       return await this.checkAIStatus(testConfig);
+    });
+
+    // 窗口上下文相关
+    ipcMain.handle("get-window-context", async () => {
+      if (!this.windowContextManager) {
+        return {
+          supported: false,
+          type: 'general',
+          icon: '🎤',
+          label: '通用',
+          appId: null,
+          title: null
+        };
+      }
+      return await this.windowContextManager.getCurrentContext();
+    });
+
+    ipcMain.handle("is-window-context-supported", () => {
+      return this.windowContextManager?.isSupported() || false;
+    });
+
+    ipcMain.handle("update-indicator-context", async () => {
+      if (!this.windowContextManager || !this.windowManager) {
+        return { success: false };
+      }
+      const context = await this.windowContextManager.getCurrentContext();
+      this.windowManager.updateIndicatorContext(context);
+      return { success: true, context };
     });
 
     // 音频转录相关
@@ -973,15 +1002,69 @@ class IPCHandlers {
 原文：{text}`;
   }
 
-  // 构建优化 prompt（支持用户自定义）
-  async _buildOptimizePrompt(text) {
+  // 获取上下文特定的 prompt 提示
+  _getContextHint(contextType) {
+    const hints = {
+      coding: `
+注意：当前在编程环境中，请特别注意：
+- 保留代码相关术语的原始格式（camelCase、snake_case、PascalCase）
+- 识别编程语言名称、框架名称、库名称
+- 保留英文技术术语，不要翻译
+- 识别可能的变量名、函数名、类名`,
+
+      terminal: `
+注意：当前在终端环境中，请特别注意：
+- 识别 Shell 命令和参数
+- 保留命令行格式和特殊字符
+- 识别文件路径格式
+- 保留英文命令名称`,
+
+      browser: `
+注意：当前在浏览器环境中，请特别注意：
+- 使用自然、流畅的语言风格
+- 识别网站名称和网络术语
+- 适当保留口语化表达`,
+
+      communication: `
+注意：当前在聊天环境中，请特别注意：
+- 保留口语化和情感化表达
+- 识别网络用语和表情描述
+- 保持轻松自然的语气`,
+
+      writing: `
+注意：当前在写作环境中，请特别注意：
+- 使用规范的书面语
+- 注意段落结构
+- 适当优化句式表达`
+    };
+
+    return hints[contextType] || '';
+  }
+
+  // 构建优化 prompt（支持用户自定义和上下文感知）
+  async _buildOptimizePrompt(text, context = null) {
     const customPrompt = await this.databaseManager.getSetting('ai_system_prompt');
-    const promptTemplate = customPrompt || this._getDefaultPrompt();
+    let promptTemplate = customPrompt || this._getDefaultPrompt();
+
+    // 如果有上下文信息且不是通用类型，添加上下文提示
+    if (context && context.type && context.type !== 'general') {
+      const contextHint = this._getContextHint(context.type);
+      if (contextHint) {
+        // 在 "直接输出结果。" 之前插入上下文提示
+        promptTemplate = promptTemplate.replace(
+          '直接输出结果。',
+          `${contextHint}
+
+直接输出结果。`
+        );
+      }
+    }
+
     return promptTemplate.replace('{text}', text);
   }
 
   // AI文本处理方法
-  async processTextWithAI(text, mode = 'optimize') {
+  async processTextWithAI(text, mode = 'optimize', context = null) {
     try {
       // 从数据库设置中获取API密钥
       const apiKey = await this.databaseManager.getSetting('ai_api_key');
@@ -992,10 +1075,19 @@ class IPCHandlers {
         };
       }
 
+      // 如果没有传入上下文，尝试获取当前窗口上下文
+      if (!context && this.windowContextManager) {
+        try {
+          context = await this.windowContextManager.getCurrentContext();
+        } catch (e) {
+          this.logger?.warn('获取窗口上下文失败', e);
+        }
+      }
+
       // 根据 mode 选择 prompt
       let prompt;
       if (mode === 'optimize') {
-        prompt = await this._buildOptimizePrompt(text);
+        prompt = await this._buildOptimizePrompt(text, context);
       } else if (mode === 'summarize') {
         prompt = `请总结以下文本的主要内容，提取关键信息，直接输出结果：\n\n${text}`;
       } else if (mode === 'format') {
@@ -1003,7 +1095,7 @@ class IPCHandlers {
       } else if (mode === 'correct') {
         prompt = `请纠正以下文本中的语法错误、错别字和语音识别错误，保持原意不变，直接输出结果：\n\n${text}`;
       } else {
-        prompt = await this._buildOptimizePrompt(text);
+        prompt = await this._buildOptimizePrompt(text, context);
       }
 
       const baseUrl = await this.databaseManager.getSetting('ai_base_url') || 'https://api.openai.com/v1';
@@ -1027,6 +1119,7 @@ class IPCHandlers {
         baseUrl,
         model,
         mode,
+        context: context ? { type: context.type, appId: context.appId } : null,
         inputText: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
         requestData
       });
