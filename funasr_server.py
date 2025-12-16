@@ -3,6 +3,7 @@
 """
 FunASR模型服务器
 保持模型在内存中，通过stdin/stdout进行通信
+支持 Fun-ASR-Nano-2512 新模型
 """
 
 import sys
@@ -16,6 +17,12 @@ import io
 import argparse
 import glob
 from pathlib import Path
+
+# 添加 Fun-ASR 仓库到 Python 路径
+_project_root = Path(__file__).parent
+_funasr_repo_path = _project_root / "Fun-ASR"
+if _funasr_repo_path.exists() and str(_funasr_repo_path) not in sys.path:
+    sys.path.insert(0, str(_funasr_repo_path))
 
 # 设置日志
 import tempfile
@@ -52,24 +59,32 @@ logger = logging.getLogger(__name__)
 logger.info(f"FunASR服务器日志文件: {log_file_path}")
 
 
+import threading
+
+# 线程锁用于 stdout 重定向
+_stdout_lock = threading.Lock()
+
 @contextlib.contextmanager
 def suppress_stdout():
-    """上下文管理器：临时重定向stdout到devnull，避免FunASR库的非JSON输出干扰IPC通信"""
-    old_stdout = sys.stdout
-    devnull = open(os.devnull, "w")
-    try:
-        sys.stdout = devnull
-        yield
-    finally:
-        sys.stdout = old_stdout
-        devnull.close()
+    """
+    上下文管理器：临时重定向stdout到devnull，避免FunASR库的非JSON输出干扰IPC通信
+    线程安全版本
+    """
+    with _stdout_lock:
+        old_stdout = sys.stdout
+        devnull = open(os.devnull, "w")
+        try:
+            sys.stdout = devnull
+            yield
+        finally:
+            sys.stdout = old_stdout
+            devnull.close()
 
 
 class FunASRServer:
     def __init__(self, damo_root=None):
         self.asr_model = None
         self.vad_model = None
-        self.punc_model = None
         self.initialized = False
         self.running = True
         self.transcription_count = 0
@@ -98,77 +113,52 @@ class FunASRServer:
         logger.info(f"收到信号 {signum}，准备退出...")
         self.running = False
 
-    def _load_asr_model(self):
-        """加载ASR模型"""
+    def _has_cuda(self):
+        """检查是否有可用的 CUDA GPU"""
         try:
-            logger.info("开始加载ASR模型...")
-            with suppress_stdout():
-                from funasr import AutoModel
+            import torch
+            return torch.cuda.is_available()
+        except ImportError:
+            return False
 
-                self.asr_model = AutoModel(
-                    model="damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-                    model_revision="v2.0.4",
-                    disable_update=True,
-                    device="cpu",
-                )
-            logger.info("ASR模型加载完成")
+    def _load_asr_model(self):
+        """加载ASR模型（在子线程中运行，不使用 suppress_stdout）"""
+        try:
+            device = "cuda" if self._has_cuda() else "cpu"
+            logger.info(f"开始加载ASR模型... (设备: {device})")
+            from funasr import AutoModel
+
+            # Fun-ASR-Nano-2512 新模型
+            model_py_path = str(_funasr_repo_path / "model.py")
+            self.asr_model = AutoModel(
+                model="FunAudioLLM/Fun-ASR-Nano-2512",
+                trust_remote_code=True,
+                remote_code=model_py_path,
+                disable_update=True,
+                device=device,
+            )
+            logger.info(f"ASR模型加载完成 (设备: {device})")
             return True
         except Exception as e:
             logger.error(f"ASR模型加载失败: {str(e)}")
             return False
 
     def _load_vad_model(self):
-        """加载VAD模型"""
+        """加载VAD模型（在子线程中运行，不使用 suppress_stdout）"""
         try:
             logger.info("开始加载VAD模型...")
-            with suppress_stdout():
-                from funasr import AutoModel
+            from funasr import AutoModel
 
-                self.vad_model = AutoModel(
-                    model="damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-                    model_revision="v2.0.4",
-                    disable_update=True,
-                    device="cpu",
-                )
+            self.vad_model = AutoModel(
+                model="damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+                model_revision="v2.0.4",
+                disable_update=True,
+                device="cpu",
+            )
             logger.info("VAD模型加载完成")
             return True
         except Exception as e:
             logger.error(f"VAD模型加载失败: {str(e)}")
-            return False
-
-    def _load_punc_model(self):
-        """加载标点恢复模型"""
-        try:
-            import time
-
-            start_time = time.time()
-            logger.info("开始加载标点恢复模型...")
-
-            # 记录导入时间
-            import_start = time.time()
-            with suppress_stdout():
-                from funasr import AutoModel
-            import_time = time.time() - import_start
-            logger.info(f"FunASR导入耗时: {import_time:.2f}秒")
-
-            # 记录模型创建时间
-            model_start = time.time()
-            with suppress_stdout():
-                self.punc_model = AutoModel(
-                    model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
-                    model_revision="v2.0.4",
-                    disable_update=True,
-                    device="cpu",
-                )
-            model_time = time.time() - model_start
-            total_time = time.time() - start_time
-
-            logger.info(
-                f"标点恢复模型加载完成 - 模型创建耗时: {model_time:.2f}秒, 总耗时: {total_time:.2f}秒"
-            )
-            return True
-        except Exception as e:
-            logger.error(f"标点恢复模型加载失败: {str(e)}")
             return False
 
     def initialize(self):
@@ -193,16 +183,13 @@ class FunASRServer:
                 thread_time = time.time() - thread_start
                 logger.info(f"{model_name}模型加载线程耗时: {thread_time:.2f}秒")
 
-            # 创建并启动三个并行线程
+            # 创建并启动两个并行线程（Fun-ASR-Nano-2512 已自带标点，不需要 punc 模型）
             threads = [
                 threading.Thread(
                     target=load_model_thread, args=("asr", self._load_asr_model)
                 ),
                 threading.Thread(
                     target=load_model_thread, args=("vad", self._load_vad_model)
-                ),
-                threading.Thread(
-                    target=load_model_thread, args=("punc", self._load_punc_model)
                 ),
             ]
 
@@ -265,11 +252,11 @@ class FunASRServer:
             logger.info(f"开始转录音频文件: {audio_path}")
 
             # 设置默认选项
+            # Fun-ASR-Nano-2512 模型已经自带标点输出，不需要额外的 punc 模型
             default_options = {
                 "batch_size_s": 60,
                 "hotword": "",
                 "use_vad": True,
-                "use_punc": True,  # 使用FunASR自带的标点恢复
                 "language": "zh",
             }
 
@@ -300,32 +287,14 @@ class FunASRServer:
             else:
                 raw_text = str(asr_result)
 
-            logger.info(f"ASR识别完成，原始文本: {raw_text[:100]}...")
-
-            # 使用FunASR进行标点恢复
-            final_text = raw_text
-            if default_options["use_punc"] and self.punc_model and raw_text.strip():
-                try:
-                    punc_result = self.punc_model.generate(input=raw_text)
-                    if isinstance(punc_result, list) and len(punc_result) > 0:
-                        if (
-                            isinstance(punc_result[0], dict)
-                            and "text" in punc_result[0]
-                        ):
-                            final_text = punc_result[0]["text"]
-                        else:
-                            final_text = str(punc_result[0])
-                    logger.info("FunASR标点恢复完成")
-                except Exception as e:
-                    logger.warning(f"FunASR标点恢复失败，使用原始文本: {str(e)}")
+            logger.info(f"ASR识别完成，文本: {raw_text[:100]}...")
 
             duration = self._get_audio_duration(audio_path)
             self.transcription_count += 1
 
             result = {
                 "success": True,
-                "text": final_text,
-                "raw_text": raw_text,
+                "text": raw_text,
                 "confidence": (
                     getattr(asr_result[0], "confidence", 0.0)
                     if isinstance(asr_result, list)
@@ -333,7 +302,7 @@ class FunASRServer:
                 ),
                 "duration": duration,
                 "language": "zh-CN",
-                "model_type": "pytorch",  # 标识使用的是pytorch版本
+                "model_type": "pytorch",
             }
 
             # 生产环境：每10次转录后进行内存清理
@@ -341,7 +310,7 @@ class FunASRServer:
                 self._cleanup_memory()
                 logger.info(f"已完成 {self.transcription_count} 次转录，执行内存清理")
 
-            logger.info(f"转录完成，最终文本: {final_text[:100]}...")
+            logger.info(f"转录完成: {raw_text[:100]}...")
             return result
 
         except Exception as e:
@@ -383,7 +352,6 @@ class FunASRServer:
             "models_loaded": {
                 "asr": self.asr_model is not None,
                 "vad": self.vad_model is not None,
-                "punc": self.punc_model is not None,
             },
         }
 
@@ -400,7 +368,6 @@ class FunASRServer:
                 "models": {
                     "asr": self.asr_model is not None,
                     "vad": self.vad_model is not None,
-                    "punc": self.punc_model is not None,  # FunASR标点恢复模型状态
                 },
             }
         except ImportError:
@@ -415,28 +382,30 @@ class FunASRServer:
         """运行服务器主循环"""
         logger.info("FunASR服务器启动")
 
-        # 解析 damo 根目录
-        def _default_damo_root():
-            # 允许通过 MODELSCOPE_CACHE 指定根；常见是 ~/.cache/modelscope/hub/damo
+        # 解析 ModelScope 模型缓存根目录（不含组织名）
+        def _default_models_root():
             root = os.environ.get("MODELSCOPE_CACHE")
             if root:
-                # 兼容两种布局：<cache>/damo 或 <cache>/hub/damo
-                if os.path.isdir(os.path.join(root, "damo")):
-                    return os.path.join(root, "damo")
-                if os.path.isdir(os.path.join(root, "hub", "damo")):
-                    return os.path.join(root, "hub", "damo")
-                # 像 Node 一样自定义到 /Volumes/APFS/AI/models/damo，就直接传入 --damo-root
-            # 默认回到用户主目录的 modelscope/hub/damo
+                # 兼容多种布局
+                candidates = [
+                    os.path.join(root, "hub", "models"),
+                    os.path.join(root, "models"),
+                    root,
+                ]
+                for c in candidates:
+                    if os.path.isdir(c):
+                        return c
+            # 默认回到用户主目录的 modelscope/hub/models
             home_dir = os.path.expanduser("~")
-            return os.path.join(home_dir, ".cache", "modelscope", "hub", "damo")
+            return os.path.join(home_dir, ".cache", "modelscope", "hub", "models")
 
-        cache_path = self.damo_root if self.damo_root else _default_damo_root()
-        logger.info(f"使用的模型根目录(damo root): {cache_path}")
+        cache_path = self.damo_root if self.damo_root else _default_models_root()
+        logger.info(f"使用的模型根目录: {cache_path}")
 
+        # 模型列表：Fun-ASR-Nano-2512 已自带标点，不需要 punc 模型
         repos = [
-            "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-            "speech_fsmn_vad_zh-cn-16k-common-pytorch",
-            "punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
+            "FunAudioLLM/Fun-ASR-Nano-2512",
+            "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
         ]
 
         def _repo_ready(repo_dir):
@@ -533,7 +502,7 @@ class FunASRServer:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--damo-root", type=str, default=None,
-                        help="damo 模型根目录，例如 /Volumes/APFS/AI/models/damo")
+                        help="ModelScope 模型缓存根目录，例如 ~/.cache/modelscope/hub/models")
     args = parser.parse_args()
 
     server = FunASRServer(damo_root=args.damo_root)

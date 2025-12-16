@@ -28,22 +28,18 @@ class FunASRManager {
     this._cachedPythonEnv = null;
     this._lastEmbeddedCheck = null;
     
-    // 模型配置
+    // 模型配置 - Fun-ASR-Nano-2512 已自带标点，不需要 punc 模型
     this.modelConfigs = {
       "asr": {
-        "name": "damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-        "cache_path": "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-        "expected_size": 840 * 1024 * 1024  // 840MB
+        "name": "FunAudioLLM/Fun-ASR-Nano-2512",
+        "cache_path": "FunAudioLLM/Fun-ASR-Nano-2512",
+        "expected_size": 1900 * 1024 * 1024,  // ~1.9GB
+        "trust_remote_code": true
       },
       "vad": {
         "name": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-        "cache_path": "speech_fsmn_vad_zh-cn-16k-common-pytorch",
+        "cache_path": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
         "expected_size": 1.6 * 1024 * 1024  // 1.6MB
-      },
-      "punc": {
-        "name": "damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
-        "cache_path": "punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
-        "expected_size": 278 * 1024 * 1024  // 278MB
       }
     };
   }
@@ -228,18 +224,17 @@ class FunASRManager {
   }
 
   /**
-   * 获取模型缓存路径
+   * 获取模型缓存路径（返回 ModelScope 基础路径，不包含组织名）
    */
   getModelCachePath() {
     const baseCachePath =
       process.env.MODELSCOPE_CACHE || path.join(os.homedir(), '.cache', 'modelscope');
 
-    // 可能的候选路径 - 添加 hub/models/damo 路径
+    // 可能的候选路径 - 返回基础的 models 目录
     const candidates = [
-      path.join(baseCachePath, 'damo'),
-      path.join(baseCachePath, 'hub', 'damo'),
-      path.join(baseCachePath, 'hub', 'models', 'damo'),  // 新增：支持 hub/models/damo 结构
-      path.join(baseCachePath, 'models', 'damo'),
+      path.join(baseCachePath, 'hub', 'models'),  // 标准 ModelScope 路径
+      path.join(baseCachePath, 'models'),
+      baseCachePath,
     ];
 
     // 先检查常见路径
@@ -250,15 +245,10 @@ class FunASRManager {
       }
     }
 
-    // 如果没找到，则递归搜索 - 修复：添加 this 关键字
-    this.logger.info && this.logger.info('常见路径未找到，开始递归搜索:', baseCachePath);
-    const found = this.findDamoRoot(baseCachePath);
-    if (found) {
-      this.logger.info && this.logger.info('递归搜索找到模型路径:', found);
-      return found;
-    }
-
-    throw new Error(`未找到有效的 damo 模型目录，请检查 MODELSCOPE_CACHE 或模型安装路径`);
+    // 如果没找到，返回默认的标准路径（会在模型下载时创建）
+    const defaultPath = path.join(baseCachePath, 'hub', 'models');
+    this.logger.info && this.logger.info('使用默认模型缓存路径:', defaultPath);
+    return defaultPath;
   }
 
 
@@ -814,17 +804,44 @@ class FunASRManager {
 
   async _stopFunASRServer() {
     if (this.serverProcess) {
-      try {
-        // 发送退出命令
-        await this._sendServerCommand({ action: 'exit' });
-      } catch (error) {
-        // 如果发送退出命令失败，直接杀死进程
-        this.serverProcess.kill();
-      }
-      
+      const proc = this.serverProcess;
       this.serverProcess = null;
       this.serverReady = false;
       this.modelsInitialized = false;
+
+      try {
+        // 先尝试发送退出命令
+        this._sendServerCommand({ action: 'exit' }).catch(() => {});
+
+        // 等待进程退出，最多 3 秒
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            // 超时，强制杀死
+            try {
+              proc.kill('SIGKILL');
+            } catch (e) {}
+            resolve();
+          }, 3000);
+
+          proc.once('exit', () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+
+          // 先尝试 SIGTERM
+          try {
+            proc.kill('SIGTERM');
+          } catch (e) {}
+        });
+
+        this.logger.info && this.logger.info('FunASR 服务器已停止');
+      } catch (error) {
+        this.logger.warn && this.logger.warn('停止 FunASR 服务器时出错:', error);
+        // 确保进程被杀死
+        try {
+          proc.kill('SIGKILL');
+        } catch (e) {}
+      }
     }
   }
 

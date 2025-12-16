@@ -130,6 +130,10 @@ cache/
 *.model
 *.bin
 
+# FireRedASR (自动下载的仓库和模型)
+FireRedASR/
+pretrained_models/
+
 # Audio files
 *.wav
 *.mp3
@@ -153,3 +157,5 @@ temp/
 .gyprc
 
 python
+# 第三方依赖
+Fun-ASR/
