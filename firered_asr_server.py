@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GLM-ASR-Nano 模型服务器
+FireRedASR 模型服务器
 保持模型在内存中，通过 stdin/stdout 进行通信
-支持 GPU 加速，针对中英混合场景优化
+支持 GPU 加速，方言和歌词识别优化
 """
 
 import sys
@@ -15,6 +15,12 @@ import signal
 import tempfile
 from pathlib import Path
 
+# 添加 FireRedASR 仓库到 Python 路径
+_project_root = Path(__file__).parent
+_fireredasr_path = _project_root / "FireRedASR"
+if _fireredasr_path.exists() and str(_fireredasr_path) not in sys.path:
+    sys.path.insert(0, str(_fireredasr_path))
+
 # 获取日志文件路径
 def get_log_path():
     if "ELECTRON_USER_DATA" in os.environ:
@@ -22,7 +28,7 @@ def get_log_path():
     else:
         log_dir = os.path.join(tempfile.gettempdir(), "ququ_logs")
     os.makedirs(log_dir, exist_ok=True)
-    return os.path.join(log_dir, "glm_asr_server.log")
+    return os.path.join(log_dir, "firered_asr_server.log")
 
 
 log_file_path = get_log_path()
@@ -36,38 +42,23 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
-logger.info(f"GLM-ASR 服务器日志文件: {log_file_path}")
-
-# Whisper 特征提取器配置
-WHISPER_FEAT_CFG = {
-    "chunk_length": 30,
-    "feature_extractor_type": "WhisperFeatureExtractor",
-    "feature_size": 128,
-    "hop_length": 160,
-    "n_fft": 400,
-    "n_samples": 480000,
-    "nb_max_frames": 3000,
-    "padding_side": "right",
-    "padding_value": 0.0,
-    "processor_class": "WhisperProcessor",
-    "return_attention_mask": False,
-    "sampling_rate": 16000,
-}
+logger.info(f"FireRedASR 服务器日志文件: {log_file_path}")
 
 
-class GLMASRServer:
-    def __init__(self, model_path=None, device=None):
+class FireRedASRServer:
+    def __init__(self, model_dir=None, model_type="aed", device=None):
         self.model = None
-        self.tokenizer = None
-        self.feature_extractor = None
-        self.config = None
+        self.punc_model = None  # 标点恢复模型
         self.initialized = False
         self.running = True
         self.transcription_count = 0
         self.total_audio_duration = 0.0
 
-        # 模型路径，默认从 HuggingFace 下载
-        self.model_path = model_path or "zai-org/GLM-ASR-Nano-2512"
+        # 模型类型：aed (1.1B, 高效) 或 llm (8.3B, 最强)
+        self.model_type = model_type
+
+        # 模型路径
+        self.model_dir = model_dir or self._get_default_model_dir()
 
         # 设备选择：优先使用 CUDA
         if device:
@@ -76,167 +67,106 @@ class GLMASRServer:
             import torch
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        logger.info(f"GLM-ASR 将使用设备: {self.device}")
+        logger.info(f"FireRedASR 将使用设备: {self.device}, 模型类型: {self.model_type}")
 
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
+
+    def _get_default_model_dir(self):
+        """获取默认模型目录"""
+        # 优先从环境变量获取
+        if "FIRERED_MODEL_DIR" in os.environ:
+            return os.environ["FIRERED_MODEL_DIR"]
+
+        # 检查 HuggingFace 缓存
+        hf_cache = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+        model_name = "FireRedASR-AED-L" if self.model_type == "aed" else "FireRedASR-LLM-L"
+        hf_model_dir = os.path.join(hf_cache, f"models--fireredteam--{model_name}")
+
+        if os.path.exists(hf_model_dir):
+            # 找到实际的模型目录
+            snapshots_dir = os.path.join(hf_model_dir, "snapshots")
+            if os.path.exists(snapshots_dir):
+                snapshots = os.listdir(snapshots_dir)
+                if snapshots:
+                    return os.path.join(snapshots_dir, snapshots[0])
+
+        # 检查项目内的 pretrained_models 目录
+        project_root = Path(__file__).parent
+        local_model_dir = project_root / "pretrained_models" / model_name
+        if local_model_dir.exists():
+            return str(local_model_dir)
+
+        # 返回默认路径（让模型加载时报错）
+        return f"pretrained_models/{model_name}"
 
     def _signal_handler(self, signum, frame):
         logger.info(f"收到信号 {signum}，准备退出...")
         self.running = False
 
-    def _get_audio_token_length(self, seconds, merge_factor=2):
-        """计算音频 token 长度"""
-        def get_T_after_cnn(L_in, dilation=1):
-            for padding, kernel_size, stride in [(1, 3, 1), (1, 3, 2)]:
-                L_out = L_in + 2 * padding - dilation * (kernel_size - 1) - 1
-                L_out = 1 + L_out // stride
-                L_in = L_out
-            return L_out
-
-        mel_len = int(seconds * 100)
-        audio_len_after_cnn = get_T_after_cnn(mel_len)
-        audio_token_num = (audio_len_after_cnn - merge_factor) // merge_factor + 1
-        audio_token_num = min(audio_token_num, 1500 // merge_factor)
-        return audio_token_num
-
     def initialize(self):
-        """初始化 GLM-ASR 模型"""
+        """初始化 FireRedASR 模型"""
         if self.initialized:
             return {"success": True, "message": "模型已初始化"}
 
         try:
             import torch
-            from transformers import (
-                AutoConfig,
-                AutoModelForCausalLM,
-                AutoTokenizer,
-                WhisperFeatureExtractor,
-            )
 
-            logger.info(f"正在加载 GLM-ASR 模型: {self.model_path}")
-            logger.info(f"使用设备: {self.device}")
+            logger.info(f"正在加载 FireRedASR 模型: {self.model_dir}")
+            logger.info(f"使用设备: {self.device}, 模型类型: {self.model_type}")
 
-            # 加载 tokenizer
-            logger.info("加载 tokenizer...")
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_path,
-                trust_remote_code=True
-            )
+            # 添加 FireRedASR 到 Python 路径
+            firered_path = os.environ.get("FIRERED_PATH")
+            if firered_path and firered_path not in sys.path:
+                sys.path.insert(0, firered_path)
 
-            # 加载特征提取器
-            logger.info("加载特征提取器...")
-            self.feature_extractor = WhisperFeatureExtractor(**WHISPER_FEAT_CFG)
+            from fireredasr.models.fireredasr import FireRedAsr
 
-            # 加载模型配置
-            logger.info("加载模型配置...")
-            self.config = AutoConfig.from_pretrained(
-                self.model_path,
-                trust_remote_code=True,
-            )
+            logger.info("加载 FireRedASR 模型...")
+            self.model = FireRedAsr.from_pretrained(self.model_type, self.model_dir)
 
-            # 加载模型
-            logger.info("加载模型权重（这可能需要几分钟）...")
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_path,
-                config=self.config,
-                torch_dtype=torch.bfloat16,
-                trust_remote_code=True,
-            ).to(self.device)
-            self.model.eval()
+            # 加载标点恢复模型（FireRedASR 不支持标点输出，需要后处理）
+            logger.info("加载标点恢复模型...")
+            try:
+                from funasr import AutoModel
+                self.punc_model = AutoModel(
+                    model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
+                    model_revision="v2.0.4",
+                    disable_update=True,
+                    device=self.device,  # 使用与 ASR 模型相同的设备
+                )
+                logger.info(f"标点恢复模型加载完成 (设备: {self.device})")
+            except Exception as e:
+                logger.warning(f"标点恢复模型加载失败，将不添加标点: {str(e)}")
+                self.punc_model = None
 
             self.initialized = True
 
             # 获取 GPU 信息
             gpu_info = ""
-            if self.device.startswith("cuda"):
+            if self.device == "cuda" and torch.cuda.is_available():
                 gpu_name = torch.cuda.get_device_name(0)
                 gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
                 gpu_info = f" (GPU: {gpu_name}, {gpu_memory:.1f}GB)"
 
-            logger.info(f"GLM-ASR 模型初始化完成{gpu_info}")
+            logger.info(f"FireRedASR 模型初始化完成{gpu_info}")
             return {
                 "success": True,
-                "message": f"GLM-ASR 模型初始化成功{gpu_info}",
+                "message": f"FireRedASR 模型初始化成功{gpu_info}",
                 "device": self.device,
+                "model_type": self.model_type,
             }
 
         except ImportError as e:
-            error_msg = f"缺少依赖: {str(e)}，请安装: pip install torch torchaudio transformers"
+            error_msg = f"缺少依赖: {str(e)}，请确保 FireRedASR 已正确安装"
             logger.error(error_msg)
             return {"success": False, "error": error_msg, "type": "import_error"}
 
         except Exception as e:
-            error_msg = f"GLM-ASR 模型初始化失败: {str(e)}"
+            error_msg = f"FireRedASR 模型初始化失败: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
             return {"success": False, "error": error_msg, "type": "init_error"}
-
-    def _build_prompt(self, audio_path, chunk_seconds=30):
-        """构建模型输入"""
-        import torch
-        import librosa
-        import numpy as np
-
-        audio_path = Path(audio_path)
-
-        # 使用 librosa 加载音频（更可靠，不依赖 torchcodec）
-        wav_np, sr = librosa.load(str(audio_path), sr=None, mono=True)
-
-        # 重采样到 16kHz
-        if sr != self.feature_extractor.sampling_rate:
-            wav_np = librosa.resample(
-                wav_np, orig_sr=sr, target_sr=self.feature_extractor.sampling_rate
-            )
-
-        # 转换为 torch tensor，shape: [1, samples]
-        wav = torch.from_numpy(wav_np).unsqueeze(0).float()
-
-        tokens = []
-        tokens += self.tokenizer.encode("<|user|>")
-        tokens += self.tokenizer.encode("\n")
-
-        audios = []
-        audio_offsets = []
-        audio_length = []
-        chunk_size = chunk_seconds * self.feature_extractor.sampling_rate
-
-        for start in range(0, wav.shape[1], chunk_size):
-            chunk = wav[:, start : start + chunk_size]
-            mel = self.feature_extractor(
-                chunk.numpy(),
-                sampling_rate=self.feature_extractor.sampling_rate,
-                return_tensors="pt",
-                padding="max_length",
-            )["input_features"]
-            audios.append(mel)
-
-            seconds = chunk.shape[1] / self.feature_extractor.sampling_rate
-            num_tokens = self._get_audio_token_length(
-                seconds, self.config.merge_factor
-            )
-            tokens += self.tokenizer.encode("<|begin_of_audio|>")
-            audio_offsets.append(len(tokens))
-            tokens += [0] * num_tokens
-            tokens += self.tokenizer.encode("<|end_of_audio|>")
-            audio_length.append(num_tokens)
-
-        if not audios:
-            raise ValueError("音频内容为空或加载失败")
-
-        tokens += self.tokenizer.encode("<|user|>")
-        tokens += self.tokenizer.encode("\nPlease transcribe this audio into text")
-        tokens += self.tokenizer.encode("<|assistant|>")
-        tokens += self.tokenizer.encode("\n")
-
-        batch = {
-            "input_ids": torch.tensor([tokens], dtype=torch.long),
-            "audios": torch.cat(audios, dim=0),
-            "audio_offsets": [audio_offsets],
-            "audio_length": [audio_length],
-            "attention_mask": torch.ones(1, len(tokens), dtype=torch.long),
-        }
-        return batch, wav.shape[1] / self.feature_extractor.sampling_rate
 
     def transcribe_audio(self, audio_path, options=None):
         """转录音频文件"""
@@ -246,57 +176,77 @@ class GLMASRServer:
                 return init_result
 
         try:
-            import torch
+            import librosa
 
             if not os.path.exists(audio_path):
                 return {"success": False, "error": f"音频文件不存在: {audio_path}"}
 
             logger.info(f"开始转录音频文件: {audio_path}")
 
-            # 构建输入
-            batch, duration = self._build_prompt(audio_path)
+            # 获取音频时长
+            duration = librosa.get_duration(filename=audio_path)
 
-            # 准备模型输入
-            tokens = batch["input_ids"].to(self.device)
-            attention_mask = batch["attention_mask"].to(self.device)
-            audios = batch["audios"].to(self.device).to(torch.bfloat16)
-            prompt_len = tokens.size(1)
+            # FireRedASR-AED 最长支持 60s，FireRedASR-LLM 最长支持 30s
+            max_duration = 60 if self.model_type == "aed" else 30
+            if duration > max_duration:
+                logger.warning(f"音频时长 {duration:.1f}s 超过限制 {max_duration}s，将进行分片处理")
 
-            model_inputs = {
-                "inputs": tokens,
-                "attention_mask": attention_mask,
-                "audios": audios,
-                "audio_offsets": batch["audio_offsets"],
-                "audio_length": batch["audio_length"],
-            }
+            # 生成唯一 ID
+            import uuid
+            audio_id = str(uuid.uuid4())[:8]
 
-            # 设置最大生成长度
-            max_new_tokens = options.get("max_new_tokens", 256) if options else 256
+            # 设置推理参数
+            use_gpu = 1 if self.device == "cuda" else 0
+            beam_size = options.get("beam_size", 3) if options else 3
 
             # 执行推理
-            with torch.inference_mode():
-                generated = self.model.generate(
-                    **model_inputs,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=False,
-                )
+            results = self.model.transcribe(
+                [audio_id],
+                [audio_path],
+                {
+                    "use_gpu": use_gpu,
+                    "beam_size": beam_size,
+                }
+            )
 
-            # 解码结果
-            transcript_ids = generated[0, prompt_len:].cpu().tolist()
-            transcript = self.tokenizer.decode(
-                transcript_ids, skip_special_tokens=True
-            ).strip()
+            # 提取结果
+            if results and len(results) > 0:
+                result_item = results[0]
+                if isinstance(result_item, dict):
+                    transcript = result_item.get("text", "")
+                elif isinstance(result_item, (list, tuple)) and len(result_item) > 1:
+                    transcript = result_item[1]  # (id, text) 格式
+                else:
+                    transcript = str(result_item)
+            else:
+                transcript = ""
+
+            raw_text = transcript.strip()
+
+            # 标点恢复（FireRedASR 不输出标点，需要后处理）
+            final_text = raw_text
+            if self.punc_model and raw_text:
+                try:
+                    punc_result = self.punc_model.generate(input=raw_text)
+                    if isinstance(punc_result, list) and len(punc_result) > 0:
+                        if isinstance(punc_result[0], dict) and "text" in punc_result[0]:
+                            final_text = punc_result[0]["text"]
+                        else:
+                            final_text = str(punc_result[0])
+                    logger.info("标点恢复完成")
+                except Exception as e:
+                    logger.warning(f"标点恢复失败，使用原始文本: {str(e)}")
 
             self.transcription_count += 1
             self.total_audio_duration += duration
 
             result = {
                 "success": True,
-                "text": transcript,
-                "raw_text": transcript,
+                "text": final_text,
+                "raw_text": raw_text,
                 "duration": duration,
-                "language": "auto",  # GLM-ASR 自动检测语言
-                "model_type": "glm-asr-nano",
+                "language": "auto",  # FireRedASR 自动检测语言
+                "model_type": f"firered-asr-{self.model_type}",
             }
 
             # 定期清理 GPU 缓存
@@ -304,7 +254,7 @@ class GLMASRServer:
                 self._cleanup_memory()
                 logger.info(f"已完成 {self.transcription_count} 次转录，执行内存清理")
 
-            logger.info(f"转录完成: {transcript[:100]}...")
+            logger.info(f"转录完成: {final_text[:100]}...")
             return result
 
         except Exception as e:
@@ -334,7 +284,8 @@ class GLMASRServer:
             status = {
                 "success": True,
                 "initialized": self.initialized,
-                "model_path": self.model_path,
+                "model_dir": self.model_dir,
+                "model_type": self.model_type,
                 "device": self.device,
                 "cuda_available": torch.cuda.is_available(),
             }
@@ -363,11 +314,12 @@ class GLMASRServer:
             ),
             "initialized": self.initialized,
             "device": self.device,
+            "model_type": self.model_type,
         }
 
     def run(self):
         """运行服务器主循环"""
-        logger.info("GLM-ASR 服务器启动")
+        logger.info("FireRedASR 服务器启动")
 
         # 启动时初始化模型
         init_result = self.initialize()
@@ -429,18 +381,25 @@ class GLMASRServer:
                 print(json.dumps(error_result, ensure_ascii=False))
                 sys.stdout.flush()
 
-        logger.info("GLM-ASR 服务器退出")
+        logger.info("FireRedASR 服务器退出")
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="GLM-ASR-Nano 语音识别服务器")
+    parser = argparse.ArgumentParser(description="FireRedASR 语音识别服务器")
     parser.add_argument(
-        "--model-path",
+        "--model-dir",
         type=str,
-        default="zai-org/GLM-ASR-Nano-2512",
-        help="模型路径或 HuggingFace 模型 ID",
+        default=None,
+        help="模型目录路径",
+    )
+    parser.add_argument(
+        "--model-type",
+        type=str,
+        default="aed",
+        choices=["aed", "llm"],
+        help="模型类型: aed (1.1B, 高效) 或 llm (8.3B, 最强)",
     )
     parser.add_argument(
         "--device",
@@ -450,5 +409,9 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    server = GLMASRServer(model_path=args.model_path, device=args.device)
+    server = FireRedASRServer(
+        model_dir=args.model_dir,
+        model_type=args.model_type,
+        device=args.device
+    )
     server.run()

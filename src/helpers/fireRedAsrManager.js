@@ -5,11 +5,11 @@ const crypto = require("crypto");
 const os = require("os");
 
 /**
- * GLM-ASR-Nano 管理器
- * 使用智谱开源的 GLM-ASR-Nano-2512 模型进行语音识别
- * 支持 GPU 加速，针对中英混合场景优化
+ * FireRedASR 管理器
+ * 使用小红书开源的 FireRedASR 模型进行语音识别
+ * 支持 GPU 加速，针对方言和歌词识别优化
  */
-class GLMASRManager {
+class FireRedASRManager {
   constructor(logger = null) {
     this.logger = logger || console;
     this.pythonCmd = null;
@@ -20,7 +20,8 @@ class GLMASRManager {
     this.transcriptionCount = 0;
 
     // 模型配置
-    this.modelPath = "zai-org/GLM-ASR-Nano-2512";
+    this.modelType = "aed"; // aed (1.1B) 或 llm (8.3B)
+    this.modelDir = null; // 自动检测
     this.device = null; // 自动检测
   }
 
@@ -29,20 +30,20 @@ class GLMASRManager {
     return this.serverReady;
   }
 
-  getGLMASRServerPath() {
+  getFireRedASRServerPath() {
     if (process.env.NODE_ENV === "development") {
-      return path.join(__dirname, "..", "..", "glm_asr_server.py");
+      return path.join(__dirname, "..", "..", "firered_asr_server.py");
     } else {
       return path.join(
         process.resourcesPath,
         "app.asar.unpacked",
-        "glm_asr_server.py"
+        "firered_asr_server.py"
       );
     }
   }
 
   getSystemPythonPath() {
-    // GLM-ASR 需要较新的 torch，优先使用 uv 创建的虚拟环境
+    // FireRedASR 需要较新的 torch，优先使用 uv 创建的虚拟环境
     const projectRoot = path.join(__dirname, "..", "..");
 
     const possiblePaths = [
@@ -84,6 +85,14 @@ class GLMASRManager {
     delete env.PYTHONPATH;
     delete env.VIRTUAL_ENV;
 
+    // 设置 FireRedASR 路径
+    const projectRoot = path.join(__dirname, "..", "..");
+    const fireRedPath = path.join(projectRoot, "FireRedASR");
+    if (fs.existsSync(fireRedPath)) {
+      env.FIRERED_PATH = fireRedPath;
+      env.PYTHONPATH = fireRedPath;
+    }
+
     // NixOS CUDA 支持：添加 CUDA 运行时库路径
     const nixosCudaLib = '/run/opengl-driver/lib';
     if (fs.existsSync(nixosCudaLib)) {
@@ -107,14 +116,14 @@ class GLMASRManager {
       const version = await this.getPythonVersion(pythonPath);
       if (version && version.major === 3 && version.minor >= 10) {
         this.pythonCmd = pythonPath;
-        this.logger.info && this.logger.info('GLM-ASR 使用 Python:', pythonPath);
+        this.logger.info && this.logger.info('FireRedASR 使用 Python:', pythonPath);
         return pythonPath;
       }
     } catch (error) {
       this.logger.error && this.logger.error('Python 验证失败:', error);
     }
 
-    throw new Error("未找到合适的 Python 3.10+，GLM-ASR 需要 Python 3.10 或更高版本");
+    throw new Error("未找到合适的 Python 3.10+，FireRedASR 需要 Python 3.10 或更高版本");
   }
 
   async getPythonVersion(pythonPath) {
@@ -138,7 +147,7 @@ class GLMASRManager {
     });
   }
 
-  async checkGLMASRInstallation() {
+  async checkFireRedASRInstallation() {
     try {
       const pythonCmd = await this.findPythonExecutable();
       const env = this.buildPythonEnvironment();
@@ -146,7 +155,7 @@ class GLMASRManager {
       return new Promise((resolve) => {
         const checkProcess = spawn(pythonCmd, [
           "-c",
-          'import torch; import transformers; print("OK")',
+          'import torch; from fireredasr.models.fireredasr import FireRedAsr; print("OK")',
         ], { env });
 
         let output = "";
@@ -177,22 +186,41 @@ class GLMASRManager {
   }
 
   async checkModelFiles() {
-    // GLM-ASR 模型会自动从 HuggingFace 下载
-    // 检查是否已缓存
-    const cacheDir = path.join(os.homedir(), '.cache', 'huggingface', 'hub');
-    const modelDir = path.join(cacheDir, 'models--zai-org--GLM-ASR-Nano-2512');
+    // 检查 HuggingFace 缓存
+    const hfCache = path.join(os.homedir(), '.cache', 'huggingface', 'hub');
+    const modelName = this.modelType === "aed" ? "FireRedASR-AED-L" : "FireRedASR-LLM-L";
+    const hfModelDir = path.join(hfCache, `models--fireredteam--${modelName}`);
 
-    const exists = fs.existsSync(modelDir);
+    // 检查项目内的模型目录
+    const projectRoot = path.join(__dirname, "..", "..");
+    const localModelDir = path.join(projectRoot, "pretrained_models", modelName);
+
+    // 检查 FireRedASR 仓库是否已克隆
+    const repoDir = path.join(projectRoot, "FireRedASR");
+    const repoExists = fs.existsSync(path.join(repoDir, "fireredasr"));
+
+    const hfExists = fs.existsSync(hfModelDir);
+    const localExists = fs.existsSync(localModelDir) && fs.readdirSync(localModelDir).length > 0;
+    const modelExists = hfExists || localExists;
 
     return {
       success: true,
-      models_downloaded: exists,
-      missing_models: exists ? [] : ["glm-asr-nano"],
+      models_downloaded: modelExists,
+      repo_cloned: repoExists,
+      missing_models: modelExists ? [] : [modelName],
       details: {
-        "glm-asr-nano": {
-          exists,
-          path: modelDir,
-          note: exists ? "模型已缓存" : "模型将在首次使用时自动下载"
+        repo: {
+          exists: repoExists,
+          path: repoDir,
+          note: repoExists ? "FireRedASR 仓库已克隆" : "需要克隆 FireRedASR 仓库"
+        },
+        [modelName]: {
+          exists: modelExists,
+          hf_path: hfModelDir,
+          local_path: localModelDir,
+          note: modelExists
+            ? `模型已缓存 (${hfExists ? 'HuggingFace' : '本地'})`
+            : "模型未下载，点击下载按钮自动安装"
         }
       }
     };
@@ -200,13 +228,13 @@ class GLMASRManager {
 
   async initializeAtStartup() {
     try {
-      this.logger.info && this.logger.info('GLM-ASR 管理器启动初始化开始');
+      this.logger.info && this.logger.info('FireRedASR 管理器启动初始化开始');
 
       const pythonCmd = await this.findPythonExecutable();
       this.logger.info && this.logger.info('Python 可执行文件:', pythonCmd);
 
-      const installStatus = await this.checkGLMASRInstallation();
-      this.logger.info && this.logger.info('GLM-ASR 依赖状态:', installStatus);
+      const installStatus = await this.checkFireRedASRInstallation();
+      this.logger.info && this.logger.info('FireRedASR 依赖状态:', installStatus);
 
       this.isInitialized = true;
 
@@ -215,9 +243,9 @@ class GLMASRManager {
         this.preInitializeModels();
       }
 
-      this.logger.info && this.logger.info('GLM-ASR 管理器启动初始化完成');
+      this.logger.info && this.logger.info('FireRedASR 管理器启动初始化完成');
     } catch (error) {
-      this.logger.warn && this.logger.warn('GLM-ASR 启动初始化失败:', error);
+      this.logger.warn && this.logger.warn('FireRedASR 启动初始化失败:', error);
       this.isInitialized = true;
     }
   }
@@ -227,38 +255,43 @@ class GLMASRManager {
       return this.initializationPromise;
     }
 
-    this.initializationPromise = this._startGLMASRServer();
+    this.initializationPromise = this._startFireRedASRServer();
     return this.initializationPromise;
   }
 
-  async _startGLMASRServer() {
+  async _startFireRedASRServer() {
     try {
-      this.logger.info && this.logger.info('启动 GLM-ASR 服务器...');
+      this.logger.info && this.logger.info('启动 FireRedASR 服务器...');
 
-      const status = await this.checkGLMASRInstallation();
+      const status = await this.checkFireRedASRInstallation();
       if (!status.installed) {
-        this.logger.warn && this.logger.warn('GLM-ASR 依赖未安装，跳过服务器启动');
+        this.logger.warn && this.logger.warn('FireRedASR 依赖未安装，跳过服务器启动');
         return;
       }
 
       const pythonCmd = await this.findPythonExecutable();
-      const serverPath = this.getGLMASRServerPath();
+      const serverPath = this.getFireRedASRServerPath();
 
-      this.logger.info && this.logger.info('GLM-ASR 服务器配置:', {
+      this.logger.info && this.logger.info('FireRedASR 服务器配置:', {
         pythonCmd,
         serverPath,
         serverExists: fs.existsSync(serverPath)
       });
 
       if (!fs.existsSync(serverPath)) {
-        this.logger.error && this.logger.error('GLM-ASR 服务器脚本未找到');
+        this.logger.error && this.logger.error('FireRedASR 服务器脚本未找到');
         return;
       }
 
       const pythonEnv = this.buildPythonEnvironment();
 
       return new Promise((resolve) => {
-        const args = [serverPath];
+        const args = [serverPath, '--model-type', this.modelType];
+
+        // 如果指定了模型目录，添加参数
+        if (this.modelDir) {
+          args.push('--model-dir', this.modelDir);
+        }
 
         // 如果指定了设备，添加参数
         if (this.device) {
@@ -284,9 +317,9 @@ class GLMASRManager {
                 initResponseReceived = true;
                 if (result.success) {
                   this.serverReady = true;
-                  this.logger.info && this.logger.info('GLM-ASR 服务器启动成功', result);
+                  this.logger.info && this.logger.info('FireRedASR 服务器启动成功', result);
                 } else {
-                  this.logger.error && this.logger.error('GLM-ASR 服务器初始化失败', result);
+                  this.logger.error && this.logger.error('FireRedASR 服务器初始化失败', result);
                 }
                 resolve();
               }
@@ -300,12 +333,12 @@ class GLMASRManager {
           const errorOutput = data.toString();
           // 只记录非进度信息的错误
           if (!errorOutput.includes('Downloading') && !errorOutput.includes('Loading')) {
-            this.logger.debug && this.logger.debug('GLM-ASR stderr:', errorOutput);
+            this.logger.debug && this.logger.debug('FireRedASR stderr:', errorOutput);
           }
         });
 
         this.serverProcess.on("close", (code) => {
-          this.logger.warn && this.logger.warn('GLM-ASR 服务器进程退出:', code);
+          this.logger.warn && this.logger.warn('FireRedASR 服务器进程退出:', code);
           this.serverProcess = null;
           this.serverReady = false;
 
@@ -315,7 +348,7 @@ class GLMASRManager {
         });
 
         this.serverProcess.on("error", (error) => {
-          this.logger.error && this.logger.error('GLM-ASR 服务器进程错误:', error);
+          this.logger.error && this.logger.error('FireRedASR 服务器进程错误:', error);
           this.serverProcess = null;
           this.serverReady = false;
 
@@ -324,22 +357,22 @@ class GLMASRManager {
           }
         });
 
-        // GLM-ASR 首次加载模型可能需要较长时间
+        // FireRedASR 首次加载模型可能需要较长时间
         setTimeout(() => {
           if (!initResponseReceived) {
-            this.logger.warn && this.logger.warn('GLM-ASR 服务器启动超时（可能正在下载模型）');
+            this.logger.warn && this.logger.warn('FireRedASR 服务器启动超时（可能正在下载模型）');
             // 不杀死进程，让它继续下载
           }
         }, 300000); // 5 分钟超时
       });
     } catch (error) {
-      this.logger.error && this.logger.error('启动 GLM-ASR 服务器异常:', error);
+      this.logger.error && this.logger.error('启动 FireRedASR 服务器异常:', error);
     }
   }
 
   async _sendServerCommand(command) {
     if (!this.serverProcess || !this.serverReady) {
-      throw new Error('GLM-ASR 服务器未就绪');
+      throw new Error('FireRedASR 服务器未就绪');
     }
 
     return new Promise((resolve, reject) => {
@@ -372,31 +405,60 @@ class GLMASRManager {
           this.serverProcess.stdout.removeListener('data', onData);
           reject(new Error('服务器响应超时'));
         }
-      }, 120000); // 2 分钟超时（GLM-ASR 推理可能较慢）
+      }, 120000); // 2 分钟超时
     });
   }
 
-  async _stopGLMASRServer() {
+  async _stopFireRedASRServer() {
     if (this.serverProcess) {
-      try {
-        await this._sendServerCommand({ action: 'exit' });
-      } catch (error) {
-        this.serverProcess.kill();
-      }
-
+      const proc = this.serverProcess;
       this.serverProcess = null;
       this.serverReady = false;
+
+      try {
+        // 先尝试发送退出命令
+        this._sendServerCommand({ action: 'exit' }).catch(() => {});
+
+        // 等待进程退出，最多 5 秒（FireRedASR 模型较大，需要更长时间）
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            // 超时，强制杀死
+            try {
+              proc.kill('SIGKILL');
+            } catch (e) {}
+            resolve();
+          }, 5000);
+
+          proc.once('exit', () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+
+          // 先尝试 SIGTERM
+          try {
+            proc.kill('SIGTERM');
+          } catch (e) {}
+        });
+
+        this.logger.info && this.logger.info('FireRedASR 服务器已停止');
+      } catch (error) {
+        this.logger.warn && this.logger.warn('停止 FireRedASR 服务器时出错:', error);
+        // 确保进程被杀死
+        try {
+          proc.kill('SIGKILL');
+        } catch (e) {}
+      }
     }
   }
 
   async transcribeAudio(audioBlob, options = {}) {
-    const status = await this.checkGLMASRInstallation();
+    const status = await this.checkFireRedASRInstallation();
     if (!status.installed) {
-      throw new Error("GLM-ASR 依赖未安装。请先安装依赖。");
+      throw new Error("FireRedASR 依赖未安装。请先安装依赖。");
     }
 
     if (!this.serverReady && this.initializationPromise) {
-      this.logger.info && this.logger.info('等待 GLM-ASR 服务器就绪...');
+      this.logger.info && this.logger.info('等待 FireRedASR 服务器就绪...');
       await this.initializationPromise;
     }
 
@@ -404,10 +466,10 @@ class GLMASRManager {
 
     try {
       if (!this.serverReady) {
-        throw new Error('GLM-ASR 服务器未就绪，请稍后重试');
+        throw new Error('FireRedASR 服务器未就绪，请稍后重试');
       }
 
-      this.logger.info && this.logger.info('使用 GLM-ASR 进行转录');
+      this.logger.info && this.logger.info('使用 FireRedASR 进行转录');
       const result = await this._sendServerCommand({
         action: 'transcribe',
         audio_path: tempAudioPath,
@@ -436,7 +498,7 @@ class GLMASRManager {
 
   async createTempAudioFile(audioBlob) {
     const tempDir = os.tmpdir();
-    const filename = `glm_asr_audio_${crypto.randomUUID()}.wav`;
+    const filename = `firered_asr_audio_${crypto.randomUUID()}.wav`;
     const tempAudioPath = path.join(tempDir, filename);
 
     let buffer;
@@ -475,16 +537,16 @@ class GLMASRManager {
       if (this.serverReady) {
         return await this._sendServerCommand({ action: 'status' });
       } else {
-        const installStatus = await this.checkGLMASRInstallation();
+        const installStatus = await this.checkFireRedASRInstallation();
         const modelStatus = await this.checkModelFiles();
 
         return {
           success: installStatus.installed,
-          error: installStatus.installed ? "GLM-ASR 服务器正在启动中..." : "GLM-ASR 依赖未安装",
+          error: installStatus.installed ? "FireRedASR 服务器正在启动中..." : "FireRedASR 依赖未安装",
           installed: installStatus.installed,
           models_downloaded: modelStatus.models_downloaded,
           initializing: this.initializationPromise !== null,
-          engine: "glm-asr-nano"
+          engine: `firered-asr-${this.modelType}`
         };
       }
     } catch (error) {
@@ -492,39 +554,124 @@ class GLMASRManager {
         success: false,
         error: error.message,
         installed: false,
-        engine: "glm-asr-nano"
+        engine: `firered-asr-${this.modelType}`
       };
     }
   }
 
   async restartServer() {
     try {
-      this.logger.info && this.logger.info('重启 GLM-ASR 服务器...');
+      this.logger.info && this.logger.info('重启 FireRedASR 服务器...');
 
       if (this.serverProcess) {
-        await this._stopGLMASRServer();
+        await this._stopFireRedASRServer();
       }
 
       this.serverReady = false;
       this.initializationPromise = null;
 
-      this.initializationPromise = this._startGLMASRServer();
+      this.initializationPromise = this._startFireRedASRServer();
       await this.initializationPromise;
 
-      return { success: true, message: 'GLM-ASR 服务器重启成功' };
+      return { success: true, message: 'FireRedASR 服务器重启成功' };
     } catch (error) {
-      this.logger.error && this.logger.error('重启 GLM-ASR 服务器失败:', error);
+      this.logger.error && this.logger.error('重启 FireRedASR 服务器失败:', error);
       return { success: false, error: error.message };
+    }
+  }
+
+  // 获取安装脚本路径
+  getSetupScriptPath() {
+    if (process.env.NODE_ENV === "development") {
+      return path.join(__dirname, "..", "..", "setup_firered_asr.py");
+    } else {
+      return path.join(
+        process.resourcesPath,
+        "app.asar.unpacked",
+        "setup_firered_asr.py"
+      );
     }
   }
 
   // 兼容 FunASRManager 的接口
   async downloadModels(progressCallback = null) {
-    // GLM-ASR 模型在首次使用时自动下载
-    if (progressCallback) {
-      progressCallback({ stage: "GLM-ASR 模型将在首次使用时自动下载", progress: 100 });
+    const pythonCmd = await this.findPythonExecutable();
+    const setupScript = this.getSetupScriptPath();
+    const env = this.buildPythonEnvironment();
+
+    if (!fs.existsSync(setupScript)) {
+      if (progressCallback) {
+        progressCallback({ stage: "error", message: "安装脚本未找到", progress: 0 });
+      }
+      return { success: false, error: "安装脚本未找到" };
     }
-    return { success: true, message: "GLM-ASR 模型将在首次使用时自动从 HuggingFace 下载" };
+
+    return new Promise((resolve) => {
+      if (progressCallback) {
+        progressCallback({ stage: "start", message: "开始安装 FireRedASR", progress: 0 });
+      }
+
+      const setupProcess = spawn(pythonCmd, [setupScript, "--model-type", this.modelType], {
+        env,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      let lastResult = null;
+
+      setupProcess.stdout.on("data", (data) => {
+        const lines = data.toString().split('\n').filter(line => line.trim());
+        for (const line of lines) {
+          try {
+            const status = JSON.parse(line);
+            lastResult = status;
+
+            if (progressCallback) {
+              progressCallback({
+                stage: status.stage || "downloading",
+                message: status.message || "",
+                progress: status.progress || 0,
+                error: status.error,
+              });
+            }
+
+            this.logger.info && this.logger.info('FireRedASR 安装进度:', status);
+          } catch (e) {
+            // 忽略非 JSON 输出
+          }
+        }
+      });
+
+      setupProcess.stderr.on("data", (data) => {
+        this.logger.debug && this.logger.debug('FireRedASR 安装 stderr:', data.toString());
+      });
+
+      setupProcess.on("close", (code) => {
+        if (code === 0 && lastResult && lastResult.success) {
+          if (progressCallback) {
+            progressCallback({ stage: "completed", message: "安装完成", progress: 100 });
+          }
+          resolve({
+            success: true,
+            message: "FireRedASR 安装完成",
+            repo_path: lastResult.repo_path,
+            model_path: lastResult.model_path,
+          });
+        } else {
+          const error = lastResult?.error || `安装失败 (exit code: ${code})`;
+          if (progressCallback) {
+            progressCallback({ stage: "error", message: error, progress: 0 });
+          }
+          resolve({ success: false, error });
+        }
+      });
+
+      setupProcess.on("error", (error) => {
+        if (progressCallback) {
+          progressCallback({ stage: "error", message: error.message, progress: 0 });
+        }
+        resolve({ success: false, error: error.message });
+      });
+    });
   }
 
   async getDownloadProgress() {
@@ -533,7 +680,7 @@ class GLMASRManager {
       success: true,
       overall_progress: modelStatus.models_downloaded ? 100 : 0,
       models: {
-        "glm-asr-nano": {
+        "firered-asr": {
           progress: modelStatus.models_downloaded ? 100 : 0,
           downloaded: modelStatus.models_downloaded ? 1 : 0,
           total: 1
@@ -557,50 +704,49 @@ class GLMASRManager {
   }
 
   /**
-   * 安装 Python（GLM-ASR 不需要嵌入式 Python）
+   * 安装 Python（FireRedASR 不需要嵌入式 Python）
    */
   async installPython(progressCallback = null) {
     if (progressCallback) {
-      progressCallback({ stage: "GLM-ASR 使用系统 Python", percentage: 100 });
+      progressCallback({ stage: "FireRedASR 使用系统 Python", percentage: 100 });
     }
     return {
       success: true,
-      message: "GLM-ASR 使用系统 Python 3.10+，无需单独安装"
+      message: "FireRedASR 使用系统 Python 3.10+，无需单独安装"
     };
   }
 
   /**
-   * 检查 FunASR 安装状态（兼容接口，实际检查 GLM-ASR）
+   * 检查 FunASR 安装状态（兼容接口，实际检查 FireRedASR）
    */
   async checkFunASRInstallation() {
-    return await this.checkGLMASRInstallation();
+    return await this.checkFireRedASRInstallation();
   }
 
   /**
-   * 安装 FunASR（兼容接口，GLM-ASR 依赖已通过 uv sync 安装）
+   * 安装 FunASR（兼容接口）
    */
   async installFunASR(progressCallback = null) {
     if (progressCallback) {
-      progressCallback({ stage: "GLM-ASR 依赖检查", percentage: 50 });
+      progressCallback({ stage: "FireRedASR 依赖检查", percentage: 50 });
     }
 
-    // 检查依赖是否已安装
-    const status = await this.checkGLMASRInstallation();
+    const status = await this.checkFireRedASRInstallation();
 
     if (progressCallback) {
-      progressCallback({ stage: status.installed ? "依赖已就绪" : "请运行 uv sync", percentage: 100 });
+      progressCallback({ stage: status.installed ? "依赖已就绪" : "请安装 FireRedASR", percentage: 100 });
     }
 
     if (status.installed) {
-      return { success: true, message: "GLM-ASR 依赖已安装" };
+      return { success: true, message: "FireRedASR 依赖已安装" };
     } else {
       return {
         success: false,
-        message: "请运行 uv sync 安装依赖",
+        message: "请安装 FireRedASR: git clone https://github.com/FireRedTeam/FireRedASR.git && pip install -r requirements.txt",
         error: status.error
       };
     }
   }
 }
 
-module.exports = GLMASRManager;
+module.exports = FireRedASRManager;
