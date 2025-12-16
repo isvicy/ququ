@@ -80,14 +80,27 @@ class ClipboardManager {
 
   async pasteText(text) {
     try {
-      // 首先保存原始剪贴板内容
+      // Linux：优先使用 wtype 直接输入（不污染剪贴板）
+      // 如果 wtype 失败再回退到剪贴板方式
+      if (process.platform === "linux") {
+        this.safeLog("🐧 Linux 环境，尝试使用 wtype 直接输入文本（不写入剪贴板）");
+        try {
+          await this.pasteLinuxWayland(text);
+          return;
+        } catch (wtypeError) {
+          this.safeLog("⚠️ wtype 不可用，回退到剪贴板方式:", wtypeError.message);
+          // wtype 失败，回退到 X11 方式
+        }
+      }
+
+      // 其他平台或 Linux X11：保存原始剪贴板内容，使用剪贴板粘贴
       const originalClipboard = clipboard.readText();
       this.safeLog(
         "💾 已保存原始剪贴板内容",
         originalClipboard.substring(0, 50) + "..."
       );
 
-      // 将文本复制到剪贴板 - 这总是有效的
+      // 将文本复制到剪贴板
       clipboard.writeText(text);
       this.safeLog(
         "📋 文本已复制到剪贴板",
@@ -111,7 +124,8 @@ class ClipboardManager {
       } else if (process.platform === "win32") {
         return await this.pasteWindows(originalClipboard);
       } else {
-        return await this.pasteLinux(originalClipboard);
+        // Linux X11
+        return await this.pasteLinuxX11(originalClipboard);
       }
     } catch (error) {
       throw error;
@@ -208,48 +222,32 @@ class ClipboardManager {
     });
   }
 
-  async pasteLinux(originalClipboard) {
-    // 检测是否为 Wayland 环境
-    const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' ||
-                      process.env.WAYLAND_DISPLAY != null;
-
-    if (isWayland) {
-      return this.pasteLinuxWayland(originalClipboard);
-    } else {
-      return this.pasteLinuxX11(originalClipboard);
-    }
-  }
-
-  // Wayland 环境：使用 wtype 输入文本，然后用 niri IPC 重置键盘焦点
+  // Wayland 环境：使用 wtype 直接输入文本，不污染剪贴板
   // wtype 在 niri 上有键盘焦点 bug：https://github.com/YaLTeR/niri/issues/1546
   // 解决方案：wtype 输入后用 niri msg 切换窗口焦点来重置键盘状态
-  async pasteLinuxWayland(originalClipboard) {
-    const textToType = clipboard.readText();
-
-    // 使用 wtype 输入文本
+  async pasteLinuxWayland(textToType) {
+    // 使用 wtype 直接输入文本（不经过剪贴板）
     try {
       await this.pasteLinuxWtype(textToType);
 
       // wtype 输入成功后，用 niri IPC 切换焦点来重置键盘状态
       // 这可以解决 niri 上的键盘焦点 bug
       await this.resetKeyboardWithNiri();
-
-      // 同步到剪贴板方便后续使用
-      this.copyToWaylandClipboard(textToType);
       return;
     } catch (wtypeError) {
-      this.safeLog("⚠️ wtype 失败，文本已在剪贴板中", wtypeError.message);
-      await this.copyToWaylandClipboard(textToType);
-      throw new Error("Wayland 文本输入失败。文本已复制到剪贴板，请手动使用 Ctrl+Shift+V 粘贴。");
+      this.safeLog("⚠️ wtype 失败", wtypeError.message);
+      throw new Error("Wayland 文本输入失败，请检查 wtype 是否已安装。");
     }
   }
 
   // 使用 wtype 直接输入文本
   async pasteLinuxWtype(textToType) {
     return new Promise((resolve, reject) => {
+      // 将换行符替换为空格，避免 wtype 把换行当成回车键触发发送
+      const sanitizedText = textToType.replace(/\n/g, ' ');
       this.safeLog("🐧 使用 wtype 输入文本");
 
-      const wtypeProcess = spawn("wtype", ["--", textToType]);
+      const wtypeProcess = spawn("wtype", ["--", sanitizedText]);
 
       wtypeProcess.on("close", (code) => {
         if (code === 0) {

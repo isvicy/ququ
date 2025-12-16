@@ -289,9 +289,6 @@ export default function App() {
       // 清空之前的处理结果，等待AI优化
       setProcessedText("");
 
-      // 不立即粘贴，等待AI优化完成后再粘贴
-      console.log("⏳ 等待AI优化完成后再进行粘贴...");
-      
       // 注意：不在这里保存到数据库，由 useRecording.js 统一处理保存逻辑
 
       toast.success("🎤 语音识别完成，AI正在优化文本...");
@@ -306,21 +303,21 @@ export default function App() {
     if (optimizedResult.success && optimizedResult.enhanced_by_ai && optimizedResult.text) {
       // 显示AI优化后的文本
       setProcessedText(optimizedResult.text);
-      
-      // 自动粘贴AI优化后的文本
-      console.log("📋 准备粘贴AI优化后的文本:", optimizedResult.text);
+
+      // 自动输入AI优化后的文本（使用 wtype，不污染剪贴板）
+      console.log("📋 准备自动输入AI优化后的文本:", optimizedResult.text);
       await safePaste(optimizedResult.text);
-      console.log("✅ AI优化文本粘贴完成");
-      
-      toast.success("🤖 AI文本优化完成并已自动粘贴！");
+      console.log("✅ AI优化文本自动输入完成");
+
+      toast.success("🤖 AI文本优化完成");
       console.log('AI优化文本已设置:', optimizedResult.text);
     } else {
       console.warn('AI优化结果无效，使用原始文本:', optimizedResult);
-      // 如果AI优化失败，则粘贴原始文本
+      // 如果AI优化失败，则输入原始文本
       if (originalText) {
-        console.log("📋 AI优化失败，粘贴原始文本:", originalText);
+        console.log("📋 AI优化失败，输入原始文本:", originalText);
         await safePaste(originalText);
-        toast.info("AI优化失败，已粘贴原始识别文本");
+        toast.info("AI优化失败，已输入原始识别文本");
       }
     }
   }, [safePaste, originalText]);
