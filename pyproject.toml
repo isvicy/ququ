@@ -19,9 +19,9 @@ dependencies = [
     "funasr>=1.2.7",
 
     # FireRedASR 语音识别
-    # 注意：FireRedASR 仓库和模型会自动下载
+    "fireredasr>=0.0.2",
     "transformers>=4.40.0",
-    "huggingface_hub>=0.20.0",  # 用于自动下载模型
+    "huggingface_hub>=0.20.0",
 ]
 
 [tool.uv]

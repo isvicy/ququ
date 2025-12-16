@@ -197,30 +197,18 @@ class IPCHandlers {
       const fs = require("fs");
       const os = require("os");
 
-      const projectRoot = path.join(__dirname, "..", "..");
+      // pip 包使用 ModelScope 缓存
+      const msCache = path.join(os.homedir(), ".cache", "modelscope", "hub");
+      const msModelDir = path.join(msCache, "pengzhendong/FireRedASR-AED-L");
 
-      // 检查仓库
-      const repoDir = path.join(projectRoot, "FireRedASR");
-      const repoExists = fs.existsSync(path.join(repoDir, "fireredasr"));
-
-      // 检查模型
-      const modelName = "FireRedASR-AED-L";
-      const localModelDir = path.join(projectRoot, "pretrained_models", modelName);
-      const hfCache = path.join(os.homedir(), ".cache", "huggingface", "hub");
-      const hfModelDir = path.join(hfCache, `models--fireredteam--${modelName}`);
-
-      const localExists = fs.existsSync(localModelDir) && fs.readdirSync(localModelDir).length > 0;
-      const hfExists = fs.existsSync(hfModelDir);
-      const modelExists = localExists || hfExists;
+      const modelExists = fs.existsSync(msModelDir);
 
       return {
         success: true,
-        installed: repoExists && modelExists,
-        repo_cloned: repoExists,
+        installed: modelExists,
         models_downloaded: modelExists,
         details: {
-          repo: { exists: repoExists, path: repoDir },
-          model: { exists: modelExists, local_path: localModelDir, hf_path: hfModelDir },
+          model: { exists: modelExists, modelscope_path: msModelDir },
         },
       };
     });
@@ -312,9 +300,9 @@ class IPCHandlers {
 
       const projectRoot = path.join(__dirname, "..", "..");
 
-      // 检查 Fun-ASR 仓库是否已克隆
-      const funAsrRepo = path.join(projectRoot, "Fun-ASR");
-      const repoExists = fs.existsSync(path.join(funAsrRepo, "model.py"));
+      // 检查 funasr_model.py 是否存在
+      const modelPyPath = path.join(projectRoot, "funasr_model.py");
+      const modelPyExists = fs.existsSync(modelPyPath);
 
       // FunASR 模型缓存位置 (ModelScope)
       const msCache = path.join(os.homedir(), ".cache", "modelscope", "hub", "models");
@@ -333,16 +321,16 @@ class IPCHandlers {
       const vadExists = fs.existsSync(vadModelDir);
       const puncExists = fs.existsSync(puncModelDir);
 
-      // 需要仓库 + ASR 模型才算安装完成（VAD/Punc 是可选的）
-      const allInstalled = repoExists && asrExists;
+      // 需要 funasr_model.py + ASR 模型才算安装完成
+      const allInstalled = modelPyExists && asrExists;
 
       return {
         success: true,
         installed: allInstalled,
         models_downloaded: asrExists,
-        repo_cloned: repoExists,
+        model_py_exists: modelPyExists,
         details: {
-          repo: { exists: repoExists, path: funAsrRepo },
+          model_py: { exists: modelPyExists, path: modelPyPath },
           asr: { exists: asrExists, path: asrModelDir, name: "Fun-ASR-Nano-2512" },
           vad: { exists: vadExists, path: vadModelDir, name: "speech_fsmn_vad" },
           punc: { exists: puncExists, path: puncModelDir, name: "punc_ct-transformer" },

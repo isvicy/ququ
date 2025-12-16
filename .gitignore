@@ -130,8 +130,7 @@ cache/
 *.model
 *.bin
 
-# FireRedASR (自动下载的仓库和模型)
-FireRedASR/
+# FireRedASR 模型（自动下载）
 pretrained_models/
 
 # Audio files

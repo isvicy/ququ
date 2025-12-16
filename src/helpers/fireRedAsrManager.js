@@ -21,7 +21,6 @@ class FireRedASRManager {
 
     // 模型配置
     this.modelType = "aed"; // aed (1.1B) 或 llm (8.3B)
-    this.modelDir = null; // 自动检测
     this.device = null; // 自动检测
   }
 
@@ -85,13 +84,7 @@ class FireRedASRManager {
     delete env.PYTHONPATH;
     delete env.VIRTUAL_ENV;
 
-    // 设置 FireRedASR 路径
-    const projectRoot = path.join(__dirname, "..", "..");
-    const fireRedPath = path.join(projectRoot, "FireRedASR");
-    if (fs.existsSync(fireRedPath)) {
-      env.FIRERED_PATH = fireRedPath;
-      env.PYTHONPATH = fireRedPath;
-    }
+    // FireRedASR 通过 pip 安装，不需要设置额外路径
 
     // NixOS CUDA 支持：添加 CUDA 运行时库路径
     const nixosCudaLib = '/run/opengl-driver/lib';
@@ -186,41 +179,24 @@ class FireRedASRManager {
   }
 
   async checkModelFiles() {
-    // 检查 HuggingFace 缓存
-    const hfCache = path.join(os.homedir(), '.cache', 'huggingface', 'hub');
+    // pip 包使用 ModelScope 缓存
+    const msCache = path.join(os.homedir(), '.cache', 'modelscope', 'hub');
     const modelName = this.modelType === "aed" ? "FireRedASR-AED-L" : "FireRedASR-LLM-L";
-    const hfModelDir = path.join(hfCache, `models--fireredteam--${modelName}`);
+    const msModelDir = path.join(msCache, `pengzhendong/FireRedASR-${this.modelType.toUpperCase()}-L`);
 
-    // 检查项目内的模型目录
-    const projectRoot = path.join(__dirname, "..", "..");
-    const localModelDir = path.join(projectRoot, "pretrained_models", modelName);
-
-    // 检查 FireRedASR 仓库是否已克隆
-    const repoDir = path.join(projectRoot, "FireRedASR");
-    const repoExists = fs.existsSync(path.join(repoDir, "fireredasr"));
-
-    const hfExists = fs.existsSync(hfModelDir);
-    const localExists = fs.existsSync(localModelDir) && fs.readdirSync(localModelDir).length > 0;
-    const modelExists = hfExists || localExists;
+    const modelExists = fs.existsSync(msModelDir);
 
     return {
       success: true,
       models_downloaded: modelExists,
-      repo_cloned: repoExists,
       missing_models: modelExists ? [] : [modelName],
       details: {
-        repo: {
-          exists: repoExists,
-          path: repoDir,
-          note: repoExists ? "FireRedASR 仓库已克隆" : "需要克隆 FireRedASR 仓库"
-        },
         [modelName]: {
           exists: modelExists,
-          hf_path: hfModelDir,
-          local_path: localModelDir,
+          modelscope_path: msModelDir,
           note: modelExists
-            ? `模型已缓存 (${hfExists ? 'HuggingFace' : '本地'})`
-            : "模型未下载，点击下载按钮自动安装"
+            ? "模型已缓存 (ModelScope)"
+            : "模型未下载，首次启动时自动下载"
         }
       }
     };
@@ -287,11 +263,6 @@ class FireRedASRManager {
 
       return new Promise((resolve) => {
         const args = [serverPath, '--model-type', this.modelType];
-
-        // 如果指定了模型目录，添加参数
-        if (this.modelDir) {
-          args.push('--model-dir', this.modelDir);
-        }
 
         // 如果指定了设备，添加参数
         if (this.device) {
@@ -742,7 +713,7 @@ class FireRedASRManager {
     } else {
       return {
         success: false,
-        message: "请安装 FireRedASR: git clone https://github.com/FireRedTeam/FireRedASR.git && pip install -r requirements.txt",
+        message: "请安装 FireRedASR: pip install fireredasr",
         error: status.error
       };
     }

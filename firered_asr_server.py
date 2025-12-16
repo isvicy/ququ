@@ -15,11 +15,14 @@ import signal
 import tempfile
 from pathlib import Path
 
-# 添加 FireRedASR 仓库到 Python 路径
+# PyTorch 2.6+ 安全加载兼容性：允许 argparse.Namespace
+# fireredasr pip 包的模型文件使用了 argparse.Namespace 序列化
+import argparse
+import torch.serialization
+torch.serialization.add_safe_globals([argparse.Namespace])
+
+# 项目根目录
 _project_root = Path(__file__).parent
-_fireredasr_path = _project_root / "FireRedASR"
-if _fireredasr_path.exists() and str(_fireredasr_path) not in sys.path:
-    sys.path.insert(0, str(_fireredasr_path))
 
 # 获取日志文件路径
 def get_log_path():
@@ -46,7 +49,7 @@ logger.info(f"FireRedASR 服务器日志文件: {log_file_path}")
 
 
 class FireRedASRServer:
-    def __init__(self, model_dir=None, model_type="aed", device=None):
+    def __init__(self, model_type="aed", device=None):
         self.model = None
         self.punc_model = None  # 标点恢复模型
         self.initialized = False
@@ -56,9 +59,6 @@ class FireRedASRServer:
 
         # 模型类型：aed (1.1B, 高效) 或 llm (8.3B, 最强)
         self.model_type = model_type
-
-        # 模型路径
-        self.model_dir = model_dir or self._get_default_model_dir()
 
         # 设备选择：优先使用 CUDA
         if device:
@@ -72,34 +72,6 @@ class FireRedASRServer:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-    def _get_default_model_dir(self):
-        """获取默认模型目录"""
-        # 优先从环境变量获取
-        if "FIRERED_MODEL_DIR" in os.environ:
-            return os.environ["FIRERED_MODEL_DIR"]
-
-        # 检查 HuggingFace 缓存
-        hf_cache = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
-        model_name = "FireRedASR-AED-L" if self.model_type == "aed" else "FireRedASR-LLM-L"
-        hf_model_dir = os.path.join(hf_cache, f"models--fireredteam--{model_name}")
-
-        if os.path.exists(hf_model_dir):
-            # 找到实际的模型目录
-            snapshots_dir = os.path.join(hf_model_dir, "snapshots")
-            if os.path.exists(snapshots_dir):
-                snapshots = os.listdir(snapshots_dir)
-                if snapshots:
-                    return os.path.join(snapshots_dir, snapshots[0])
-
-        # 检查项目内的 pretrained_models 目录
-        project_root = Path(__file__).parent
-        local_model_dir = project_root / "pretrained_models" / model_name
-        if local_model_dir.exists():
-            return str(local_model_dir)
-
-        # 返回默认路径（让模型加载时报错）
-        return f"pretrained_models/{model_name}"
-
     def _signal_handler(self, signum, frame):
         logger.info(f"收到信号 {signum}，准备退出...")
         self.running = False
@@ -112,18 +84,12 @@ class FireRedASRServer:
         try:
             import torch
 
-            logger.info(f"正在加载 FireRedASR 模型: {self.model_dir}")
             logger.info(f"使用设备: {self.device}, 模型类型: {self.model_type}")
-
-            # 添加 FireRedASR 到 Python 路径
-            firered_path = os.environ.get("FIRERED_PATH")
-            if firered_path and firered_path not in sys.path:
-                sys.path.insert(0, firered_path)
 
             from fireredasr.models.fireredasr import FireRedAsr
 
-            logger.info("加载 FireRedASR 模型...")
-            self.model = FireRedAsr.from_pretrained(self.model_type, self.model_dir)
+            logger.info("加载 FireRedASR 模型（首次运行会自动下载）...")
+            self.model = FireRedAsr.from_pretrained(self.model_type)
 
             # 加载标点恢复模型（FireRedASR 不支持标点输出，需要后处理）
             logger.info("加载标点恢复模型...")
@@ -284,7 +250,6 @@ class FireRedASRServer:
             status = {
                 "success": True,
                 "initialized": self.initialized,
-                "model_dir": self.model_dir,
                 "model_type": self.model_type,
                 "device": self.device,
                 "cuda_available": torch.cuda.is_available(),
@@ -389,12 +354,6 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="FireRedASR 语音识别服务器")
     parser.add_argument(
-        "--model-dir",
-        type=str,
-        default=None,
-        help="模型目录路径",
-    )
-    parser.add_argument(
         "--model-type",
         type=str,
         default="aed",
@@ -410,7 +369,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     server = FireRedASRServer(
-        model_dir=args.model_dir,
         model_type=args.model_type,
         device=args.device
     )
