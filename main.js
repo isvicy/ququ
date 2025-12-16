@@ -29,7 +29,7 @@ const WindowManager = require("./src/helpers/windowManager");
 const DatabaseManager = require("./src/helpers/database");
 const ClipboardManager = require("./src/helpers/clipboard");
 const FunASRManager = require("./src/helpers/funasrManager");
-const GLMASRManager = require("./src/helpers/glmAsrManager");
+const FireRedASRManager = require("./src/helpers/fireRedAsrManager");
 const ASRManagerFactory = require("./src/helpers/asrManagerFactory");
 const TrayManager = require("./src/helpers/tray");
 const HotkeyManager = require("./src/helpers/hotkeyManager");
@@ -187,12 +187,30 @@ async function startApp() {
     logger.info('macOS Dock已显示');
   }
 
-  // 在启动时初始化 ASR 管理器（不等待以避免阻塞）
+  // 在启动时初始化 ASR 管理器
   const engineName = asrManagerFactory.getEngineName();
   logger.info(`开始初始化 ASR 管理器 (${engineName})...`);
-  asrManager.initializeAtStartup().catch((err) => {
-    logger.warn(`${engineName} 在启动时不可用，这不是关键问题`, err);
-  });
+  // 异步初始化，等待模型真正加载完成后显示指示器
+  (async () => {
+    try {
+      // 先调用 initializeAtStartup 启动进程
+      await asrManager.initializeAtStartup();
+
+      // 等待 initializationPromise 完成（模型真正加载完成）
+      if (asrManager.initializationPromise) {
+        logger.info(`等待 ${engineName} 模型加载完成...`);
+        await asrManager.initializationPromise;
+      }
+
+      logger.info(`${engineName} 初始化完成，显示录音状态指示器`);
+      await windowManager.showIndicator('idle');
+      logger.info('录音状态指示器已显示');
+    } catch (err) {
+      logger.warn(`${engineName} 初始化失败，仍显示指示器`, err);
+      // 即使初始化失败也显示指示器（用户可能需要去设置页面解决问题）
+      windowManager.showIndicator('idle').catch(() => {});
+    }
+  })();
 
   // 读取启动设置
   const startMinimized = databaseManager.getSetting('start_minimized', false);
@@ -228,14 +246,7 @@ async function startApp() {
   await trayManager.createTray();
   logger.info('系统托盘设置完成');
 
-  // 创建并显示录音状态指示器（常驻）
-  try {
-    logger.info('创建录音状态指示器...');
-    await windowManager.showIndicator('idle');
-    logger.info('录音状态指示器已显示');
-  } catch (error) {
-    logger.error("创建录音状态指示器时出错:", error);
-  }
+  // 注意：录音状态指示器会在 ASR 初始化完成后自动显示（见上方代码）
 
   logger.info('应用启动完成');
 
