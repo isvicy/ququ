@@ -20,8 +20,6 @@ dependencies = [
 
     # FireRedASR 语音识别
     "fireredasr>=0.0.2",
-    "transformers>=4.40.0",
-    "huggingface_hub>=0.20.0",
 ]
 
 [tool.uv]
