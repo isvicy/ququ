@@ -18,11 +18,8 @@ import argparse
 import glob
 from pathlib import Path
 
-# 添加 Fun-ASR 仓库到 Python 路径
+# 项目根目录
 _project_root = Path(__file__).parent
-_funasr_repo_path = _project_root / "Fun-ASR"
-if _funasr_repo_path.exists() and str(_funasr_repo_path) not in sys.path:
-    sys.path.insert(0, str(_funasr_repo_path))
 
 # 设置日志
 import tempfile
@@ -128,8 +125,8 @@ class FunASRServer:
             logger.info(f"开始加载ASR模型... (设备: {device})")
             from funasr import AutoModel
 
-            # Fun-ASR-Nano-2512 新模型
-            model_py_path = str(_funasr_repo_path / "model.py")
+            # Fun-ASR-Nano-2512 新模型（使用本地优化过的 model.py）
+            model_py_path = str(_project_root / "funasr_model.py")
             self.asr_model = AutoModel(
                 model="FunAudioLLM/Fun-ASR-Nano-2512",
                 trust_remote_code=True,

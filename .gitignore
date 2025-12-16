@@ -157,5 +157,3 @@ temp/
 .gyprc
 
 python
-# 第三方依赖
-Fun-ASR/
