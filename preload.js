@@ -27,6 +27,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getDownloadProgress: () => ipcRenderer.invoke("get-download-progress"),
   downloadModels: () => ipcRenderer.invoke("download-models"),
 
+  // FireRedASR 专用 API
+  installFireRedASR: () => ipcRenderer.invoke("install-firered-asr"),
+  checkFireRedASRStatus: () => ipcRenderer.invoke("check-firered-asr-status"),
+  onFireRedInstallProgress: (callback) => {
+    ipcRenderer.on("firered-install-progress", callback);
+    return () => ipcRenderer.removeListener("firered-install-progress", callback);
+  },
+
+  // FunASR 专用 API
+  installFunASRModels: () => ipcRenderer.invoke("install-funasr-models"),
+  checkFunASRModelStatus: () => ipcRenderer.invoke("check-funasr-model-status"),
+  onFunASRModelDownloadProgress: (callback) => {
+    ipcRenderer.on("funasr-model-download-progress", callback);
+    return () => ipcRenderer.removeListener("funasr-model-download-progress", callback);
+  },
+
+  // ASR 引擎热切换 API
+  switchASREngine: (engine) => ipcRenderer.invoke("switch-asr-engine", engine),
+  getCurrentASREngine: () => ipcRenderer.invoke("get-current-asr-engine"),
+  onASREngineSwitchProgress: (callback) => {
+    ipcRenderer.on("asr-engine-switch-progress", callback);
+    return () => ipcRenderer.removeListener("asr-engine-switch-progress", callback);
+  },
+
   // AI文本处理
   processText: (text, mode) => ipcRenderer.invoke("process-text", text, mode),
   checkAIStatus: (testConfig) => ipcRenderer.invoke("check-ai-status", testConfig),

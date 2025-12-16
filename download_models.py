@@ -14,24 +14,28 @@ def download_model(model_config, progress_callback=None):
     """下载单个模型"""
     model_name = model_config["name"]
     model_type = model_config["type"]
-    
+    trust_remote = model_config.get("trust_remote_code", False)
+
     try:
         from funasr import AutoModel
-        
+
         if progress_callback:
             progress_callback(model_type, "downloading", 0)
-        
+
         # 下载模型
-        AutoModel(
-            model=model_name,
-            model_revision="v2.0.4"
-        )
-        
+        kwargs = {"model": model_name}
+        if trust_remote:
+            kwargs["trust_remote_code"] = True
+        else:
+            kwargs["model_revision"] = "v2.0.4"
+
+        AutoModel(**kwargs)
+
         if progress_callback:
             progress_callback(model_type, "completed", 100)
-            
+
         return {"success": True, "model": model_type}
-        
+
     except Exception as e:
         if progress_callback:
             progress_callback(model_type, "error", 0, str(e))
@@ -43,8 +47,9 @@ def main():
     # 模型配置
     models = [
         {
-            "name": "damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-            "type": "asr"
+            "name": "FunAudioLLM/Fun-ASR-Nano-2512",
+            "type": "asr",
+            "trust_remote_code": True
         },
         {
             "name": "damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",

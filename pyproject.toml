@@ -1,7 +1,7 @@
 [project]
 name = "ququ"
 version = "0.1.0"
-description = "开源免费的语音转文字应用，支持 FunASR 和 GLM-ASR-Nano"
+description = "开源免费的语音转文字应用，支持 FunASR 和 FireRedASR"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -9,7 +9,7 @@ dependencies = [
     "numpy<2",
     "librosa>=0.11.0",
 
-    # PyTorch - 使用较新版本以支持 GLM-ASR
+    # PyTorch - 使用较新版本以支持 FireRedASR
     # 注意：需要根据 CUDA 版本选择合适的 PyTorch
     # 参考：https://pytorch.org/get-started/locally/
     "torch>=2.1.0",
@@ -18,10 +18,10 @@ dependencies = [
     # FunASR 语音识别
     "funasr>=1.2.7",
 
-    # GLM-ASR 语音识别
-    # 注意：GLM-ASR-Nano-2512 要求 transformers==4.51.3
-    # 新版 transformers 移除了 WhisperFlashAttention2 类，会导致加载失败
-    "transformers==4.51.3",
+    # FireRedASR 语音识别
+    # 注意：FireRedASR 仓库和模型会自动下载
+    "transformers>=4.40.0",
+    "huggingface_hub>=0.20.0",  # 用于自动下载模型
 ]
 
 [tool.uv]

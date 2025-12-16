@@ -6,6 +6,7 @@ class IPCHandlers {
     this.databaseManager = managers.databaseManager;
     this.clipboardManager = managers.clipboardManager;
     this.funasrManager = managers.funasrManager;
+    this.asrManagerFactory = managers.asrManagerFactory; // ASR 管理器工厂，支持热切换
     this.windowManager = managers.windowManager;
     this.hotkeyManager = managers.hotkeyManager;
     this.windowContextManager = managers.windowContextManager;
@@ -15,6 +16,17 @@ class IPCHandlers {
     this.f2RegisteredSenders = new Set();
 
     this.setupHandlers();
+  }
+
+  /**
+   * 获取当前活动的 ASR 管理器
+   * 优先使用工厂的当前管理器，支持热切换
+   */
+  getActiveASRManager() {
+    if (this.asrManagerFactory) {
+      return this.asrManagerFactory.getManager();
+    }
+    return this.funasrManager;
   }
 
   setupHandlers() {
@@ -90,6 +102,254 @@ class IPCHandlers {
       });
     });
 
+    // FireRedASR 专用安装接口
+    ipcMain.handle("install-firered-asr", async (event) => {
+      const { spawn } = require("child_process");
+      const path = require("path");
+      const fs = require("fs");
+
+      // 获取 Python 路径
+      const projectRoot = path.join(__dirname, "..", "..");
+      const pythonPaths = [
+        path.join(projectRoot, ".venv", "bin", "python"),
+        path.join(projectRoot, ".venv", "bin", "python3"),
+        "python3",
+        "python",
+      ];
+
+      let pythonCmd = "python3";
+      for (const p of pythonPaths) {
+        if (p.startsWith("/") || p.startsWith(".")) {
+          if (fs.existsSync(p)) {
+            pythonCmd = p;
+            break;
+          }
+        } else {
+          pythonCmd = p;
+          break;
+        }
+      }
+
+      // 获取安装脚本路径
+      const setupScript = process.env.NODE_ENV === "development"
+        ? path.join(projectRoot, "setup_firered_asr.py")
+        : path.join(process.resourcesPath, "app.asar.unpacked", "setup_firered_asr.py");
+
+      if (!fs.existsSync(setupScript)) {
+        return { success: false, error: "安装脚本未找到" };
+      }
+
+      return new Promise((resolve) => {
+        const setupProcess = spawn(pythonCmd, [setupScript, "--model-type", "aed"], {
+          env: {
+            ...process.env,
+            PYTHONDONTWRITEBYTECODE: "1",
+            PYTHONIOENCODING: "utf-8",
+            PYTHONUNBUFFERED: "1",
+          },
+        });
+
+        let lastResult = null;
+
+        setupProcess.stdout.on("data", (data) => {
+          const lines = data.toString().split("\n").filter((line) => line.trim());
+          for (const line of lines) {
+            try {
+              const status = JSON.parse(line);
+              lastResult = status;
+              event.sender.send("firered-install-progress", status);
+              this.logger.info && this.logger.info("FireRedASR 安装进度:", status);
+            } catch (e) {
+              // 忽略非 JSON 输出
+            }
+          }
+        });
+
+        setupProcess.stderr.on("data", (data) => {
+          this.logger.debug && this.logger.debug("FireRedASR 安装 stderr:", data.toString());
+        });
+
+        setupProcess.on("close", (code) => {
+          if (code === 0 && lastResult && lastResult.success) {
+            resolve({
+              success: true,
+              message: "FireRedASR 安装完成",
+              repo_path: lastResult.repo_path,
+              model_path: lastResult.model_path,
+            });
+          } else {
+            resolve({
+              success: false,
+              error: lastResult?.error || `安装失败 (exit code: ${code})`,
+            });
+          }
+        });
+
+        setupProcess.on("error", (error) => {
+          resolve({ success: false, error: error.message });
+        });
+      });
+    });
+
+    // 检查 FireRedASR 安装状态
+    ipcMain.handle("check-firered-asr-status", async () => {
+      const path = require("path");
+      const fs = require("fs");
+      const os = require("os");
+
+      const projectRoot = path.join(__dirname, "..", "..");
+
+      // 检查仓库
+      const repoDir = path.join(projectRoot, "FireRedASR");
+      const repoExists = fs.existsSync(path.join(repoDir, "fireredasr"));
+
+      // 检查模型
+      const modelName = "FireRedASR-AED-L";
+      const localModelDir = path.join(projectRoot, "pretrained_models", modelName);
+      const hfCache = path.join(os.homedir(), ".cache", "huggingface", "hub");
+      const hfModelDir = path.join(hfCache, `models--fireredteam--${modelName}`);
+
+      const localExists = fs.existsSync(localModelDir) && fs.readdirSync(localModelDir).length > 0;
+      const hfExists = fs.existsSync(hfModelDir);
+      const modelExists = localExists || hfExists;
+
+      return {
+        success: true,
+        installed: repoExists && modelExists,
+        repo_cloned: repoExists,
+        models_downloaded: modelExists,
+        details: {
+          repo: { exists: repoExists, path: repoDir },
+          model: { exists: modelExists, local_path: localModelDir, hf_path: hfModelDir },
+        },
+      };
+    });
+
+    // FunASR 专用安装接口 (Fun-ASR-Nano-2512)
+    ipcMain.handle("install-funasr-models", async (event) => {
+      const { spawn } = require("child_process");
+      const path = require("path");
+      const fs = require("fs");
+
+      const projectRoot = path.join(__dirname, "..", "..");
+      const pythonPaths = [
+        path.join(projectRoot, ".venv", "bin", "python"),
+        path.join(projectRoot, ".venv", "bin", "python3"),
+        "python3",
+        "python",
+      ];
+
+      let pythonCmd = "python3";
+      for (const p of pythonPaths) {
+        if (p.startsWith("/") && fs.existsSync(p)) {
+          pythonCmd = p;
+          break;
+        }
+      }
+
+      // 使用 Fun-ASR-Nano-2512 专用安装脚本
+      const setupScript = path.join(projectRoot, "setup_funasr_2512.py");
+      if (!fs.existsSync(setupScript)) {
+        return { success: false, error: "setup_funasr_2512.py 不存在" };
+      }
+
+      return new Promise((resolve) => {
+        const setupProcess = spawn(pythonCmd, [setupScript], {
+          cwd: projectRoot,
+          env: {
+            ...process.env,
+            PYTHONUNBUFFERED: "1",
+            PYTHONIOENCODING: "utf-8",
+          },
+        });
+
+        let lastResult = null;
+
+        setupProcess.stdout.on("data", (data) => {
+          const lines = data.toString().split("\n").filter(Boolean);
+          for (const line of lines) {
+            try {
+              const progress = JSON.parse(line);
+              lastResult = progress;
+              event.sender.send("funasr-model-download-progress", progress);
+              this.logger.info && this.logger.info("FunASR 2512 安装进度:", progress);
+            } catch (e) {
+              // 非 JSON 输出忽略
+            }
+          }
+        });
+
+        setupProcess.stderr.on("data", (data) => {
+          this.logger.debug && this.logger.debug("FunASR 2512 安装 stderr:", data.toString());
+        });
+
+        setupProcess.on("close", (code) => {
+          if (code === 0 && lastResult && lastResult.success) {
+            resolve({
+              success: true,
+              message: "Fun-ASR-Nano-2512 安装完成",
+              repo_path: lastResult.repo_path,
+            });
+          } else {
+            resolve({
+              success: false,
+              error: lastResult?.error || `安装失败 (exit code: ${code})`,
+            });
+          }
+        });
+
+        setupProcess.on("error", (error) => {
+          resolve({ success: false, error: error.message });
+        });
+      });
+    });
+
+    // 检查 FunASR 模型状态
+    ipcMain.handle("check-funasr-model-status", async () => {
+      const path = require("path");
+      const fs = require("fs");
+      const os = require("os");
+
+      const projectRoot = path.join(__dirname, "..", "..");
+
+      // 检查 Fun-ASR 仓库是否已克隆
+      const funAsrRepo = path.join(projectRoot, "Fun-ASR");
+      const repoExists = fs.existsSync(path.join(funAsrRepo, "model.py"));
+
+      // FunASR 模型缓存位置 (ModelScope)
+      const msCache = path.join(os.homedir(), ".cache", "modelscope", "hub", "models");
+
+      // 新模型: FunAudioLLM/Fun-ASR-Nano-2512
+      const asrModelDir = path.join(msCache, "FunAudioLLM", "Fun-ASR-Nano-2512");
+      const asrModelFile = path.join(asrModelDir, "model.pt");
+
+      // VAD 模型
+      const vadModelDir = path.join(msCache, "damo", "speech_fsmn_vad_zh-cn-16k-common-pytorch");
+
+      // Punc 模型
+      const puncModelDir = path.join(msCache, "damo", "punc_ct-transformer_zh-cn-common-vocab272727-pytorch");
+
+      const asrExists = fs.existsSync(asrModelFile);
+      const vadExists = fs.existsSync(vadModelDir);
+      const puncExists = fs.existsSync(puncModelDir);
+
+      // 需要仓库 + ASR 模型才算安装完成（VAD/Punc 是可选的）
+      const allInstalled = repoExists && asrExists;
+
+      return {
+        success: true,
+        installed: allInstalled,
+        models_downloaded: asrExists,
+        repo_cloned: repoExists,
+        details: {
+          repo: { exists: repoExists, path: funAsrRepo },
+          asr: { exists: asrExists, path: asrModelDir, name: "Fun-ASR-Nano-2512" },
+          vad: { exists: vadExists, path: vadModelDir, name: "speech_fsmn_vad" },
+          punc: { exists: puncExists, path: puncModelDir, name: "punc_ct-transformer" },
+        },
+      };
+    });
+
     // AI文本处理
     ipcMain.handle("process-text", async (event, text, mode = 'optimize') => {
       return await this.processTextWithAI(text, mode);
@@ -118,9 +378,69 @@ class IPCHandlers {
       return this.windowContextManager?.isSupported() || false;
     });
 
-    // 音频转录相关
+    // 音频转录相关 - 使用当前活动的 ASR 管理器
     ipcMain.handle("transcribe-audio", async (event, audioData, options) => {
-      return await this.funasrManager.transcribeAudio(audioData, options);
+      const manager = this.getActiveASRManager();
+      return await manager.transcribeAudio(audioData, options);
+    });
+
+    // ASR 引擎热切换
+    ipcMain.handle("switch-asr-engine", async (event, newEngine) => {
+      if (!this.asrManagerFactory) {
+        return { success: false, error: "ASR 管理器工厂未初始化" };
+      }
+
+      this.logger.info && this.logger.info(`收到切换 ASR 引擎请求: ${newEngine}`);
+
+      // 发送切换开始事件
+      event.sender.send("asr-engine-switch-progress", {
+        stage: "starting",
+        message: `正在切换到 ${newEngine}...`,
+        progress: 10
+      });
+
+      try {
+        const result = await this.asrManagerFactory.switchEngine(newEngine);
+
+        if (result.success) {
+          // 保存设置
+          await this.databaseManager.setSetting('asr_engine', newEngine);
+
+          event.sender.send("asr-engine-switch-progress", {
+            stage: "complete",
+            message: result.message,
+            progress: 100
+          });
+        } else {
+          event.sender.send("asr-engine-switch-progress", {
+            stage: "error",
+            message: result.message,
+            progress: 0
+          });
+        }
+
+        return result;
+      } catch (error) {
+        this.logger.error && this.logger.error("切换 ASR 引擎失败:", error);
+        event.sender.send("asr-engine-switch-progress", {
+          stage: "error",
+          message: error.message,
+          progress: 0
+        });
+        return { success: false, error: error.message };
+      }
+    });
+
+    // 获取当前 ASR 引擎信息
+    ipcMain.handle("get-current-asr-engine", () => {
+      if (this.asrManagerFactory) {
+        return {
+          success: true,
+          engine: this.asrManagerFactory.getEngineName(),
+          isSwitching: this.asrManagerFactory.isSwitchingEngine()
+        };
+      }
+      return { success: false, error: "ASR 管理器工厂未初始化" };
     });
 
     // 数据库相关

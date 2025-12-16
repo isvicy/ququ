@@ -70,6 +70,30 @@ const SettingsPage = () => {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
+  // FireRedASR 安装状态
+  const [fireRedInstallStatus, setFireRedInstallStatus] = useState({
+    checking: false,
+    installing: false,
+    installed: null, // null=未检查, true=已安装, false=未安装
+    progress: 0,
+    message: "",
+    error: null,
+  });
+
+  // FunASR 安装状态
+  const [funasrInstallStatus, setFunasrInstallStatus] = useState({
+    checking: false,
+    installing: false,
+    installed: null,
+    progress: 0,
+    message: "",
+    error: null,
+  });
+
+  // ASR 引擎切换状态
+  const [engineSwitching, setEngineSwitching] = useState(false);
+  const [switchProgress, setSwitchProgress] = useState({ message: "", progress: 0 });
+
   // 权限管理
   const showAlert = (alert) => {
     toast(alert.title, {
@@ -89,6 +113,17 @@ const SettingsPage = () => {
   useEffect(() => {
     loadSettings();
   }, []);
+
+  // 当设置加载完成后，检查对应引擎的安装状态
+  useEffect(() => {
+    if (!loading) {
+      if (settings.asr_engine === 'firered-asr') {
+        checkFireRedASRStatus();
+      } else if (settings.asr_engine === 'funasr') {
+        checkFunASRStatus();
+      }
+    }
+  }, [loading, settings.asr_engine]);
 
   const loadSettings = async () => {
     try {
@@ -148,8 +183,280 @@ const SettingsPage = () => {
     }
   };
 
+  // 检查 FireRedASR 安装状态
+  const checkFireRedASRStatus = async () => {
+    if (!window.electronAPI?.checkFireRedASRStatus) return;
+
+    setFireRedInstallStatus(prev => ({ ...prev, checking: true }));
+
+    try {
+      const status = await window.electronAPI.checkFireRedASRStatus();
+      const installed = status.installed;
+
+      setFireRedInstallStatus(prev => ({
+        ...prev,
+        checking: false,
+        installed,
+        message: installed ? "FireRedASR 已就绪" : "需要下载 FireRedASR",
+      }));
+
+      return installed;
+    } catch (error) {
+      setFireRedInstallStatus(prev => ({
+        ...prev,
+        checking: false,
+        installed: false,
+        error: error.message,
+      }));
+      return false;
+    }
+  };
+
+  // 安装 FireRedASR
+  const installFireRedASR = async () => {
+    if (!window.electronAPI?.installFireRedASR) return;
+
+    setFireRedInstallStatus(prev => ({
+      ...prev,
+      installing: true,
+      progress: 0,
+      message: "正在准备安装...",
+      error: null,
+    }));
+
+    try {
+      // 监听安装进度 - 使用 FireRedASR 专用进度事件
+      const progressHandler = (event, progress) => {
+        setFireRedInstallStatus(prev => ({
+          ...prev,
+          progress: progress.progress || progress.overall_progress || prev.progress,
+          message: progress.message || progress.stage || prev.message,
+        }));
+      };
+
+      const removeListener = window.electronAPI.onFireRedInstallProgress?.(progressHandler);
+
+      const result = await window.electronAPI.installFireRedASR();
+
+      // 清理监听器
+      removeListener?.();
+
+      if (result.success) {
+        setFireRedInstallStatus(prev => ({
+          ...prev,
+          installing: false,
+          installed: true,
+          progress: 100,
+          message: "安装完成！",
+        }));
+
+        toast.success("FireRedASR 安装成功");
+
+        // 自动保存设置
+        await window.electronAPI.setSetting('asr_engine', 'firered-asr');
+        toast.success("已切换到 FireRedASR");
+
+        return true;
+      } else {
+        throw new Error(result.error || "安装失败");
+      }
+    } catch (error) {
+      setFireRedInstallStatus(prev => ({
+        ...prev,
+        installing: false,
+        error: error.message,
+        message: "安装失败",
+      }));
+
+      toast.error(`FireRedASR 安装失败: ${error.message}`);
+      return false;
+    }
+  };
+
+  // 检查 FunASR 安装状态
+  const checkFunASRStatus = async () => {
+    if (!window.electronAPI?.checkFunASRModelStatus) return;
+
+    setFunasrInstallStatus(prev => ({ ...prev, checking: true }));
+
+    try {
+      const status = await window.electronAPI.checkFunASRModelStatus();
+      const installed = status.installed;
+
+      setFunasrInstallStatus(prev => ({
+        ...prev,
+        checking: false,
+        installed,
+        message: installed ? "FunASR 模型已就绪" : "需要下载 FunASR 模型",
+      }));
+
+      return installed;
+    } catch (error) {
+      setFunasrInstallStatus(prev => ({
+        ...prev,
+        checking: false,
+        installed: false,
+        error: error.message,
+      }));
+      return false;
+    }
+  };
+
+  // 安装 FunASR 模型
+  const installFunASR = async () => {
+    if (!window.electronAPI?.installFunASRModels) return;
+
+    setFunasrInstallStatus(prev => ({
+      ...prev,
+      installing: true,
+      progress: 0,
+      message: "正在准备下载模型...",
+      error: null,
+    }));
+
+    try {
+      // 监听下载进度
+      const progressHandler = (event, progress) => {
+        setFunasrInstallStatus(prev => ({
+          ...prev,
+          progress: progress.overall_progress || progress.progress || prev.progress,
+          message: progress.message || progress.stage || prev.message,
+        }));
+      };
+
+      const removeListener = window.electronAPI.onFunASRModelDownloadProgress?.(progressHandler);
+
+      const result = await window.electronAPI.installFunASRModels();
+
+      removeListener?.();
+
+      if (result.success) {
+        setFunasrInstallStatus(prev => ({
+          ...prev,
+          installing: false,
+          installed: true,
+          progress: 100,
+          message: "模型下载完成！",
+        }));
+
+        toast.success("FunASR 模型下载成功");
+
+        await window.electronAPI.setSetting('asr_engine', 'funasr');
+        toast.success("已切换到 FunASR，请重启应用");
+
+        return true;
+      } else {
+        throw new Error(result.error || "下载失败");
+      }
+    } catch (error) {
+      setFunasrInstallStatus(prev => ({
+        ...prev,
+        installing: false,
+        error: error.message,
+        message: "下载失败",
+      }));
+
+      toast.error(`FunASR 模型下载失败: ${error.message}`);
+      return false;
+    }
+  };
+
+  // 处理 ASR 引擎切换
+  const handleASREngineChange = async (newEngine) => {
+    const oldEngine = settings.asr_engine;
+
+    // 如果正在切换，忽略
+    if (engineSwitching) {
+      toast.warning("正在切换引擎中，请稍候...");
+      return;
+    }
+
+    // 先更新 UI
+    setSettings(prev => ({ ...prev, asr_engine: newEngine }));
+
+    if (newEngine === 'firered-asr') {
+      // 检查是否已安装
+      const installed = await checkFireRedASRStatus();
+
+      if (!installed) {
+        // 未安装，自动开始安装
+        toast.info("正在下载 FireRedASR，请稍候...");
+        const success = await installFireRedASR();
+
+        if (!success) {
+          // 安装失败，回退
+          setSettings(prev => ({ ...prev, asr_engine: oldEngine }));
+          toast.error("安装失败，已回退");
+          return;
+        }
+      }
+
+      // 已安装或安装完成，执行热切换
+      await performHotSwitch(newEngine, oldEngine);
+
+    } else {
+      // 切换到 FunASR
+      const installed = await checkFunASRStatus();
+
+      if (!installed) {
+        // 模型未下载，自动开始下载
+        toast.info("正在下载 FunASR 模型，请稍候...");
+        const success = await installFunASR();
+
+        if (!success) {
+          // 下载失败，回退
+          setSettings(prev => ({ ...prev, asr_engine: oldEngine }));
+          toast.error("下载失败，已回退");
+          return;
+        }
+      }
+
+      // 已安装或安装完成，执行热切换
+      await performHotSwitch(newEngine, oldEngine);
+    }
+  };
+
+  // 执行热切换
+  const performHotSwitch = async (newEngine, oldEngine) => {
+    if (!window.electronAPI?.switchASREngine) {
+      // 兼容旧版本：直接保存设置
+      await window.electronAPI?.setSetting('asr_engine', newEngine);
+      toast.success(`已切换到 ${newEngine === 'funasr' ? 'FunASR' : 'FireRedASR'}，请重启应用`);
+      return;
+    }
+
+    setEngineSwitching(true);
+    setSwitchProgress({ message: "正在切换引擎...", progress: 10 });
+
+    try {
+      const result = await window.electronAPI.switchASREngine(newEngine);
+
+      if (result.success) {
+        toast.success(result.message);
+        setSwitchProgress({ message: "切换完成", progress: 100 });
+      } else {
+        toast.error(result.message || "切换失败");
+        // 回退 UI
+        setSettings(prev => ({ ...prev, asr_engine: result.engine || oldEngine }));
+        setSwitchProgress({ message: "", progress: 0 });
+      }
+    } catch (error) {
+      toast.error(`切换失败: ${error.message}`);
+      setSettings(prev => ({ ...prev, asr_engine: oldEngine }));
+      setSwitchProgress({ message: "", progress: 0 });
+    } finally {
+      setEngineSwitching(false);
+    }
+  };
+
   // 处理输入变化
   const handleInputChange = (key, value) => {
+    // ASR 引擎切换使用专门的处理函数
+    if (key === 'asr_engine') {
+      handleASREngineChange(value);
+      return;
+    }
+
     setSettings(prev => ({
       ...prev,
       [key]: value
@@ -372,14 +679,28 @@ const SettingsPage = () => {
                   语音识别引擎
                 </h2>
                 <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                  选择用于语音转文字的识别引擎。切换引擎后需要重启应用生效。
+                  选择用于语音转文字的识别引擎。支持热切换，无需重启应用。
                 </p>
               </div>
+
+              {/* 引擎切换进度指示 */}
+              {engineSwitching && (
+                <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <div className="flex items-center space-x-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                    <span className="text-sm text-blue-700 dark:text-blue-300">
+                      {switchProgress.message || "正在切换引擎..."}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-3">
                 {/* FunASR 选项 */}
                 <label
-                  className={`flex items-start space-x-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${
+                  className={`flex items-start space-x-3 p-3 rounded-lg border-2 transition-colors ${
+                    (funasrInstallStatus.installing || engineSwitching) ? 'cursor-wait opacity-70' : 'cursor-pointer'
+                  } ${
                     settings.asr_engine === 'funasr'
                       ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                       : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
@@ -391,23 +712,66 @@ const SettingsPage = () => {
                     value="funasr"
                     checked={settings.asr_engine === 'funasr'}
                     onChange={(e) => handleInputChange('asr_engine', e.target.value)}
+                    disabled={funasrInstallStatus.installing || engineSwitching}
                     className="mt-1 w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                   />
                   <div className="flex-1">
                     <div className="flex items-center space-x-2">
-                      <span className="font-medium text-gray-900 dark:text-gray-100">FunASR (Paraformer)</span>
-                      <span className="px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded">默认</span>
+                      <span className="font-medium text-gray-900 dark:text-gray-100">FunASR (Fun-ASR-Nano-2512)</span>
+                      <span className="px-1.5 py-0.5 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded">推荐</span>
+                      <span className="px-1.5 py-0.5 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded">GPU</span>
+                      <span className="px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded">31语言</span>
+                      <span className="px-1.5 py-0.5 text-xs bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 rounded">方言</span>
                     </div>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      阿里达摩院开源模型，中文识别准确，资源占用较低，支持 CPU 运行
+                      FunAudioLLM 2025.12 新模型，支持 31 种语言、7 大方言，自动添加标点符号
                     </p>
+
+                    {/* 安装进度显示 */}
+                    {funasrInstallStatus.installing && (
+                      <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                        <div className="flex items-center space-x-2 mb-2">
+                          <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                          <span className="text-sm text-blue-700 dark:text-blue-300">
+                            {funasrInstallStatus.message || "正在下载模型..."}
+                          </span>
+                        </div>
+                        <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2">
+                          <div
+                            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                            style={{ width: `${funasrInstallStatus.progress}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                          首次使用需下载约 500MB 模型
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 安装成功提示 - 切换引擎时隐藏 */}
+                    {!funasrInstallStatus.installing && !engineSwitching && funasrInstallStatus.installed === true && settings.asr_engine === 'funasr' && (
+                      <div className="mt-2 p-2 bg-green-50 dark:bg-green-900/20 rounded flex items-center space-x-2">
+                        <CheckCircle className="w-4 h-4 text-green-600" />
+                        <span className="text-xs text-green-700 dark:text-green-400">FunASR 模型已就绪</span>
+                      </div>
+                    )}
+
+                    {/* 安装失败提示 */}
+                    {funasrInstallStatus.error && (
+                      <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded flex items-center space-x-2">
+                        <XCircle className="w-4 h-4 text-red-600" />
+                        <span className="text-xs text-red-700 dark:text-red-400">{funasrInstallStatus.error}</span>
+                      </div>
+                    )}
                   </div>
                 </label>
 
-                {/* GLM-ASR 选项 */}
+                {/* FireRedASR 选项 */}
                 <label
-                  className={`flex items-start space-x-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${
-                    settings.asr_engine === 'glm-asr'
+                  className={`flex items-start space-x-3 p-3 rounded-lg border-2 transition-colors ${
+                    (fireRedInstallStatus.installing || engineSwitching) ? 'cursor-wait opacity-70' : 'cursor-pointer'
+                  } ${
+                    settings.asr_engine === 'firered-asr'
                       ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                       : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
                   }`}
@@ -415,23 +779,65 @@ const SettingsPage = () => {
                   <input
                     type="radio"
                     name="asr_engine"
-                    value="glm-asr"
-                    checked={settings.asr_engine === 'glm-asr'}
+                    value="firered-asr"
+                    checked={settings.asr_engine === 'firered-asr'}
                     onChange={(e) => handleInputChange('asr_engine', e.target.value)}
+                    disabled={fireRedInstallStatus.installing || engineSwitching}
                     className="mt-1 w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                   />
                   <div className="flex-1">
                     <div className="flex items-center space-x-2">
-                      <span className="font-medium text-gray-900 dark:text-gray-100">GLM-ASR-Nano</span>
-                      <span className="px-1.5 py-0.5 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded">推荐</span>
+                      <span className="font-medium text-gray-900 dark:text-gray-100">FireRedASR</span>
                       <span className="px-1.5 py-0.5 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded">GPU</span>
+                      <span className="px-1.5 py-0.5 text-xs bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 rounded">方言</span>
                     </div>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      智谱 2024.12 开源，1.5B 参数，中英混合识别最优，需要 GPU 和较新的 PyTorch
+                      小红书 2025.01 开源，1.1B 参数，方言/口音识别优秀，CER 3.18%
                     </p>
-                    <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-900/20 rounded text-xs text-amber-700 dark:text-amber-300">
-                      ⚠️ 首次使用时模型会自动下载（约 3GB），需要 NVIDIA GPU
-                    </div>
+
+                    {/* 安装进度显示 */}
+                    {fireRedInstallStatus.installing && (
+                      <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                        <div className="flex items-center space-x-2 mb-2">
+                          <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                          <span className="text-sm text-blue-700 dark:text-blue-300">
+                            {fireRedInstallStatus.message || "正在安装..."}
+                          </span>
+                        </div>
+                        <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2">
+                          <div
+                            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                            style={{ width: `${fireRedInstallStatus.progress}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                          首次安装需下载约 2GB 模型，请耐心等待
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 安装成功提示 - 切换引擎时隐藏 */}
+                    {!fireRedInstallStatus.installing && !engineSwitching && fireRedInstallStatus.installed === true && settings.asr_engine === 'firered-asr' && (
+                      <div className="mt-2 p-2 bg-green-50 dark:bg-green-900/20 rounded flex items-center space-x-2">
+                        <CheckCircle className="w-4 h-4 text-green-600" />
+                        <span className="text-xs text-green-700 dark:text-green-400">FireRedASR 已就绪</span>
+                      </div>
+                    )}
+
+                    {/* 安装失败提示 */}
+                    {fireRedInstallStatus.error && (
+                      <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded flex items-center space-x-2">
+                        <XCircle className="w-4 h-4 text-red-600" />
+                        <span className="text-xs text-red-700 dark:text-red-400">{fireRedInstallStatus.error}</span>
+                      </div>
+                    )}
+
+                    {/* 未安装时的提示 */}
+                    {!fireRedInstallStatus.installing && fireRedInstallStatus.installed !== true && !fireRedInstallStatus.error && (
+                      <div className="mt-2 p-2 bg-amber-50 dark:bg-amber-900/20 rounded text-xs text-amber-700 dark:text-amber-300">
+                        选择此选项后将自动下载安装，需要 NVIDIA GPU
+                      </div>
+                    )}
                   </div>
                 </label>
               </div>
