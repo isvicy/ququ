@@ -198,8 +198,8 @@ class IPCHandlers {
       const os = require("os");
 
       // pip 包使用 ModelScope 缓存
-      const msCache = path.join(os.homedir(), ".cache", "modelscope", "hub");
-      const msModelDir = path.join(msCache, "pengzhendong/FireRedASR-AED-L");
+      const msCache = path.join(os.homedir(), ".cache", "modelscope", "hub", "models");
+      const msModelDir = path.join(msCache, "pengzhendong", "FireRedASR-AED-L");
 
       const modelExists = fs.existsSync(msModelDir);
 

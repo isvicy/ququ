@@ -180,9 +180,9 @@ class FireRedASRManager {
 
   async checkModelFiles() {
     // pip 包使用 ModelScope 缓存
-    const msCache = path.join(os.homedir(), '.cache', 'modelscope', 'hub');
+    const msCache = path.join(os.homedir(), '.cache', 'modelscope', 'hub', 'models');
     const modelName = this.modelType === "aed" ? "FireRedASR-AED-L" : "FireRedASR-LLM-L";
-    const msModelDir = path.join(msCache, `pengzhendong/FireRedASR-${this.modelType.toUpperCase()}-L`);
+    const msModelDir = path.join(msCache, 'pengzhendong', `FireRedASR-${this.modelType.toUpperCase()}-L`);
 
     const modelExists = fs.existsSync(msModelDir);
 
